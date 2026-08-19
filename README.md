@@ -1,5 +1,12 @@
 # polkafox
 
+Опубликованное веб-приложение «Полка» (гардероб обуви):
+
+- GitHub Pages: https://hollyfox2026-lab.github.io/polkafox/
+- Резервная копия: https://polkafox.netlify.app/
+
+Статические файлы сайта находятся в каталоге `docs/` и публикуются из ветки `gh-pages`.
+
 Polkafox is a small fox-sightings web application. It pairs a JSON API built on
 the [Polka](https://github.com/lukeed/polka) web framework with a lightweight
 static frontend served from the same process. State is held in memory, so the
