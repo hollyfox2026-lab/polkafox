@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Polkafox — Fox Sightings</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%8A%3C/text%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="hero">
+      <div class="hero-inner">
+        <span class="logo">🦊</span>
+        <div>
+          <h1>Polkafox</h1>
+          <p class="tagline">A tiny field journal for fox sightings.</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel">
+        <h2>Log a sighting</h2>
+        <form id="sighting-form" novalidate>
+          <label>
+            Fox name
+            <input name="name" type="text" placeholder="e.g. Rusty" required />
+          </label>
+          <label>
+            Location
+            <input name="location" type="text" placeholder="e.g. Birch Grove" required />
+          </label>
+          <label>
+            Note
+            <textarea name="note" rows="3" placeholder="What was it doing?"></textarea>
+          </label>
+          <button type="submit">Add sighting</button>
+          <p id="form-message" class="form-message" role="status"></p>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Recent sightings</h2>
+          <button id="refresh" class="ghost" type="button">Refresh</button>
+        </div>
+        <ul id="sightings" class="sightings"></ul>
+        <p id="empty" class="empty" hidden>No sightings yet — be the first to log one.</p>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
