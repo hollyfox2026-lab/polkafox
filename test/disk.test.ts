@@ -42,8 +42,8 @@ describe("Yandex Disk client", () => {
         return jsonResponse({ type: "dir", name: "app" });
       }
       if (url.includes("/resources/upload")) {
-        expect(url).toContain("oauth_token=token");
-        expect(headers.get("Authorization")).toBeNull();
+        expect(headers.get("Authorization")).toBe("OAuth token");
+        expect(url).not.toContain("oauth_token=");
         return jsonResponse({ href: "https://uploader.test/put", method: "PUT" });
       }
       if (url === "https://uploader.test/put") {
@@ -58,7 +58,7 @@ describe("Yandex Disk client", () => {
     const uploadLink = calls.find((call) => call.url.includes("/resources/upload"));
     expect(uploadLink?.url).toContain(encodeURIComponent(`${APP_FOLDER}${CATALOG_NAME}`));
     expect(uploadLink?.url).toContain("overwrite=true");
-    expect(uploadLink?.url).toContain("oauth_token=token");
+    expect(uploadLink?.url).not.toContain("oauth_token=");
 
     const put = calls.find((call) => call.url === "https://uploader.test/put");
     expect(put?.method).toBe("PUT");
@@ -168,31 +168,59 @@ describe("Yandex Disk client", () => {
   });
 
   it("читает имя пользователя из /v1/disk", async () => {
-    const fetchImpl: typeof fetch = async (input) => {
+    const fetchImpl: typeof fetch = async (input, init) => {
       const url = String(input);
-      expect(url).toContain("oauth_token=token");
-      if (url.startsWith(`${YANDEX_DISK_API}?`) || url === `${YANDEX_DISK_API}?oauth_token=token`) {
-        return jsonResponse({ user: { login: "fox", display_name: "Лиса" } });
-      }
-      throw new Error(url);
+      const headers = new Headers(init?.headers);
+      expect(url).toBe(`${YANDEX_DISK_API}`);
+      expect(headers.get("Authorization")).toBe("OAuth token");
+      expect(init?.credentials).toBe("omit");
+      return jsonResponse({ user: { login: "fox", display_name: "Лиса" } });
     };
     const client = createYandexDiskClient("token", fetchImpl);
     await expect(client.getUser()).resolves.toEqual({ login: "fox", displayName: "Лиса" });
   });
 
-  it("при 401 повторяет запрос с заголовком OAuth", async () => {
+  it("при 401 повторяет запрос с Bearer, затем с oauth_token", async () => {
     const schemes: string[] = [];
+    const urls: string[] = [];
     const fetchImpl: typeof fetch = async (input, init) => {
       const headers = new Headers(init?.headers);
       schemes.push(headers.get("Authorization") ?? "");
-      if (schemes.length === 1) return jsonResponse({ message: "Unauthorized" }, 401);
-      expect(String(input)).toBe(`${YANDEX_DISK_API}`);
+      urls.push(String(input));
+      if (schemes.length < 3) return jsonResponse({ message: "Unauthorized" }, 401);
+      expect(String(input)).toContain("oauth_token=tok");
       return jsonResponse({ user: { login: "fox", display_name: "Лиса" } });
     };
     const client = createYandexDiskClient("tok", fetchImpl);
     await expect(client.getUser()).resolves.toEqual({ login: "fox", displayName: "Лиса" });
-    expect(schemes[0]).toBe("");
-    expect(schemes[1]).toBe("OAuth tok");
+    expect(schemes).toEqual(["OAuth tok", "Bearer tok", ""]);
+    expect(urls[2]).toContain("oauth_token=tok");
+  });
+
+  it("в обычном браузере после сбоя заголовка берёт oauth_token", async () => {
+    const urls: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      urls.push(url);
+      const headers = new Headers(init?.headers);
+      if (headers.get("Authorization")) throw new Error("Failed to fetch");
+      expect(url).toContain("oauth_token=tok");
+      return jsonResponse({ user: { login: "fox", display_name: "Лиса" } });
+    };
+    const client = createYandexDiskClient("tok", fetchImpl);
+    await expect(client.getUser()).resolves.toEqual({ login: "fox", displayName: "Лиса" });
+    expect(urls[0]).toBe(`${YANDEX_DISK_API}`);
+    expect(urls.at(-1)).toContain("oauth_token=tok");
+  });
+
+  it("на изолированном значке сразу шлёт oauth_token", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      expect(String(input)).toContain("oauth_token=tok");
+      expect(new Headers(init?.headers).get("Authorization")).toBeNull();
+      return jsonResponse({ user: { login: "fox", display_name: "Лиса" } });
+    };
+    const client = createYandexDiskClient("tok", fetchImpl, { isolated: true });
+    await expect(client.getUser()).resolves.toEqual({ login: "fox", displayName: "Лиса" });
   });
 
   it("пробрасывает 401, если оба заголовка отклонены", async () => {

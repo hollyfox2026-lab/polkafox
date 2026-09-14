@@ -98,32 +98,83 @@ export function isBrowserNetworkError(message: string): boolean {
     message,
   );
 }
+
+export type DiskAuthMode = "header-oauth" | "header-bearer" | "query";
+
+export function isIsolatedBrowser(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  const nav = navigator as Navigator & { standalone?: boolean };
+  if (nav.standalone) return true;
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.matchMedia("(display-mode: minimal-ui)").matches ||
+    window.matchMedia("(display-mode: fullscreen)").matches
+  );
+}
+
+export function diskAuthModes(isolated = false): DiskAuthMode[] {
+  return isolated
+    ? ["query", "header-oauth", "header-bearer"]
+    : ["header-oauth", "header-bearer", "query"];
+}
+
+export function diskRequest(
+  path: string,
+  token: string,
+  mode: DiskAuthMode,
+  init: RequestInit = {},
+): { url: string; headers: Headers } {
+  const headers = new Headers(init.headers);
+  headers.delete("Authorization");
+  if (init.body != null && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "text/plain;charset=UTF-8");
+  }
+  if (mode === "query") {
+    return { url: diskApiUrl(path, token), headers };
+  }
+  headers.set("Authorization", mode === "header-bearer" ? `Bearer ${token}` : `OAuth ${token}`);
+  return { url: `${YANDEX_DISK_API}${path}`, headers };
+}
+
 export function createYandexDiskClient(
   token: string,
   fetchImpl: typeof fetch = fetch,
+  options: { isolated?: boolean } = {},
 ): YandexDiskClient {
   let root: string | null = null;
+  let chosenMode: DiskAuthMode | null = null;
+  const isolated = options.isolated ?? isIsolatedBrowser();
 
   async function rawFetch(url: string, init: RequestInit = {}): Promise<Response> {
     try {
-      return await fetchImpl(url, { ...init, cache: "no-store" });
+      return await fetchImpl(url, { ...init, cache: "no-store", credentials: "omit" });
     } catch (error) {
       throw wrapNetworkError(error);
     }
   }
 
   async function api(path: string, init: RequestInit = {}): Promise<Response> {
-    // oauth_token в query, без Authorization: на iOS PWA заголовок даёт CORS preflight и Load failed.
-    const url = diskApiUrl(path, token);
-    const headers = new Headers(init.headers);
-    if (init.body != null && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "text/plain;charset=UTF-8");
+    const order = chosenMode
+      ? [chosenMode, ...diskAuthModes(isolated).filter((mode) => mode !== chosenMode)]
+      : diskAuthModes(isolated);
+    let lastNetwork: unknown = null;
+    let lastUnauthorized: Response | null = null;
+    for (const mode of order) {
+      const { url, headers } = diskRequest(path, token, mode, init);
+      try {
+        const response = await rawFetch(url, { ...init, headers });
+        if (response.status === 401) {
+          lastUnauthorized = response;
+          continue;
+        }
+        chosenMode = mode;
+        return response;
+      } catch (error) {
+        lastNetwork = error;
+      }
     }
-    const response = await rawFetch(url, { ...init, headers });
-    if (response.status !== 401) return response;
-    const retryHeaders = new Headers(init.headers);
-    retryHeaders.set("Authorization", `OAuth ${token}`);
-    return rawFetch(`${YANDEX_DISK_API}${path}`, { ...init, headers: retryHeaders });
+    if (lastUnauthorized) return lastUnauthorized;
+    throw lastNetwork ?? wrapNetworkError(new Error("Failed to fetch"));
   }
 
   async function readError(response: Response): Promise<YandexDiskError> {
