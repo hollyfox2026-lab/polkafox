@@ -24,11 +24,6 @@ async function dropServiceWorkerCache(): Promise<boolean> {
 }
 
 async function boot(): Promise<void> {
-  const appleMobile = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  if (appleMobile) {
-    await dropServiceWorkerCache();
-  }
-
   if (hasOAuthReturn() && sessionStorage.getItem(OAUTH_SW_BUST_KEY) !== "1") {
     sessionStorage.setItem(OAUTH_SW_BUST_KEY, "1");
     const hadWorker = await dropServiceWorkerCache();
@@ -55,7 +50,7 @@ async function boot(): Promise<void> {
     </StrictMode>,
   );
 
-  if (!appleMobile && "serviceWorker" in navigator) {
+  if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
       navigator.serviceWorker.register("./sw.js").catch(() => {});
     });

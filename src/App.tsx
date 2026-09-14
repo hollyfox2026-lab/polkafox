@@ -18,10 +18,18 @@ import {
   type ShoeDraft,
 } from "./types";
 import { DeviceLogin } from "./components/DeviceLogin";
+import { LoginSheet } from "./components/LoginSheet";
 import { createYandexDiskClient, YandexDiskError } from "./yandex/disk";
 import { requestDeviceCode, pollDeviceToken, type DeviceAuthRequest } from "./yandex/device";
 import { consumeOAuthRedirect, startYandexLogin, type OAuthToken } from "./yandex/oauth";
-import { clearSession, loadSession, saveSession, type YandexSession } from "./yandex/session";
+import {
+  clearSession,
+  loadSession,
+  saveSession,
+  serializeSession,
+  sessionFromUnknown,
+  type YandexSession,
+} from "./yandex/session";
 import { syncErrorMessage, syncWithDisk, type SyncStatus } from "./yandex/sync";
 import { isAppleMobile, isIsolatedHomeScreen } from "./display";
 
@@ -37,6 +45,9 @@ export function App() {
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [deviceAuth, setDeviceAuth] = useState<DeviceAuthRequest | null>(null);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [pasteValue, setPasteValue] = useState("");
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const syncing = useRef(false);
   const pendingPush = useRef(false);
 
@@ -234,25 +245,58 @@ export function App() {
   const homeScreenHint = appleMobile
     ? isolated
       ? session
-        ? "Это отдельная копия с экрана «Домой», не общая с Safari. Нажмите «Синхронизировать», чтобы забрать каталог с Яндекс Диска."
-        : "Это отдельная копия с экрана «Домой». Обычный вход уходит в Safari и оставляет это окно пустым. Нажмите «Войти в Диск» — Яндекс покажет код для этого окна. Либо удалите значок и добавьте вкладку из Safari."
-      : "Значок должен открывать ту же вкладку Safari. Если полка на значке пустая — удалите старый значок и добавьте страницу из Safari ещё раз."
+        ? "Это отдельная копия с экрана «Домой». Нажмите «Синхронизировать», чтобы забрать каталог с Яндекс Диска."
+        : "Это отдельная копия с экрана «Домой». Нажмите «Войти в Диск»: вставьте вход, скопированный в Safari, либо войдите через Яндекс."
+      : "Чтобы полка была и на значке, в Safari откройте меню Диска и нажмите «Скопировать вход». Затем откройте значок и вставьте вход."
     : null;
 
+  function applyPastedSession() {
+    const next = sessionFromUnknown(pasteValue);
+    if (!next) {
+      setPasteError("Не удалось прочитать вход. Скопируйте его заново в Safari: меню Диска → «Скопировать вход».");
+      return;
+    }
+    saveSession(next);
+    setSession(next);
+    setLoginOpen(false);
+    setPasteValue("");
+    setPasteError(null);
+    setBanner("Яндекс Диск подключён. Каталог загружается.");
+  }
+
+  async function handleDeviceLogin() {
+    try {
+      const request = await requestDeviceCode();
+      setLoginOpen(false);
+      setDeviceAuth(request);
+      setBanner("Введите код на странице Яндекса и вернитесь сюда.");
+    } catch (error) {
+      setPasteError(
+        error instanceof Error
+          ? `${error.message} Вставьте вход из Safari или войдите через Яндекс.`
+          : "Яндекс не выдал код. Вставьте вход из Safari.",
+      );
+    }
+  }
+
   async function handleLogin() {
-    if (isolated) {
-      try {
-        const request = await requestDeviceCode();
-        setDeviceAuth(request);
-        setBanner("Введите код на странице Яндекса и вернитесь сюда. Тогда полка подтянется с Диска в это окно.");
-      } catch (error) {
-        setBanner(
-          `${error instanceof Error ? error.message : "Не удалось начать вход."} Удалите значок Полки и добавьте вкладку из Safari — откроется та же полка.`,
-        );
-      }
+    setPasteError(null);
+    if (appleMobile) {
+      setLoginOpen(true);
       return;
     }
     await startYandexLogin();
+  }
+
+  async function copySession() {
+    if (!session) return;
+    const text = serializeSession(session);
+    try {
+      await navigator.clipboard.writeText(text);
+      setBanner("Вход скопирован. Откройте Полку с экрана «Домой» → «Войти в Диск» → вставьте вход.");
+    } catch {
+      window.prompt("Скопируйте вход и вставьте его в Полку на значке:", text);
+    }
   }
 
   return (
@@ -283,6 +327,7 @@ export function App() {
               onSync={() => {
                 if (session) void runSync(session);
               }}
+              onCopySession={() => void copySession()}
             />
           </div>
         </header>
@@ -363,6 +408,23 @@ export function App() {
           title={route.id ? "Редактирование" : "Новая пара"}
           onCancel={() => setRoute(current ? { name: "detail", id: current.id } : { name: "list" })}
           onSave={(draft) => void saveDraft(draft, route.id)}
+        />
+      ) : null}
+      {loginOpen ? (
+        <LoginSheet
+          pasteValue={pasteValue}
+          pasteError={pasteError}
+          onPasteValue={(value) => {
+            setPasteValue(value);
+            setPasteError(null);
+          }}
+          onApplyPaste={applyPastedSession}
+          onYandex={() => void startYandexLogin()}
+          onDeviceCode={() => void handleDeviceLogin()}
+          onCancel={() => {
+            setLoginOpen(false);
+            setPasteError(null);
+          }}
         />
       ) : null}
       {deviceAuth ? (

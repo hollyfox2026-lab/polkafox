@@ -10,6 +10,7 @@ interface DiskBarProps {
   onLogin: () => void;
   onLogout: () => void;
   onSync: () => void;
+  onCopySession?: () => void;
 }
 
 export function DiskBar({
@@ -20,6 +21,7 @@ export function DiskBar({
   onLogin,
   onLogout,
   onSync,
+  onCopySession,
 }: DiskBarProps) {
   const [open, setOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -58,6 +60,11 @@ export function DiskBar({
             <button type="button" className="ghost" onClick={onSync} disabled={status === "syncing"}>
               Синхронизировать
             </button>
+            {onCopySession ? (
+              <button type="button" className="ghost" onClick={onCopySession}>
+                Скопировать вход
+              </button>
+            ) : null}
             <button
               type="button"
               className="danger"
@@ -70,7 +77,8 @@ export function DiskBar({
             </button>
           </div>
           <p className="disk-panel-note">
-            Без входа карточки остаются только в браузере этого устройства.
+            Значок на экране «Домой» — отдельная копия. Скопируйте вход здесь, затем вставьте его в
+            Полку с значка.
           </p>
         </div>
       ) : null}

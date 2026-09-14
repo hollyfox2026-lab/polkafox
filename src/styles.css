@@ -46,6 +46,23 @@
   line-height: 1.45;
 }
 
+.login-sheet {
+  text-align: left;
+}
+
+.login-sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.login-sheet-error {
+  color: var(--accent-deep);
+  font-size: 13px;
+  margin-top: 8px;
+}
+
 .top-actions {
   display: flex;
   flex-direction: column;
@@ -116,12 +133,9 @@
 
 .disk-panel-actions {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   margin: 12px 0;
-}
-
-.disk-panel-actions > * {
-  flex: 1;
 }
 
 .local-hint,
