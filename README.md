@@ -66,11 +66,44 @@ npm run dev
 
 - `local` (по умолчанию) — файлы сохраняются в каталог `uploads/` и раздаются по
   адресу `/uploads/...`. Внешних учётных записей не требуется.
-- `yandex` — облачное хранилище Yandex. Подключается на следующем шаге после
-  выбора варианта (Object Storage или Диск) и добавления ключей доступа.
+- `yandex` — [Yandex Object Storage](https://yandex.cloud/ru/docs/storage/)
+  (S3-совместимый API). Фотографии загружаются в бакет; в каталоге сохраняется
+  абсолютный HTTPS URL объекта.
 
 Интерфейс `StorageProvider` (`src/storage.ts`) единый, поэтому смена провайдера
 не затрагивает остальной код.
+
+### Yandex Object Storage
+
+1. В консоли Yandex Cloud создайте бакет Object Storage.
+2. Включите публичное чтение объектов (или выдайте ACL `public-read` на уровне
+   бакета), чтобы ссылки из каталога открывались в браузере без подписи.
+3. Создайте статический ключ доступа сервисного аккаунта с правами на бакет.
+4. Задайте переменные окружения и запустите сервер:
+
+```bash
+export STORAGE_PROVIDER=yandex
+export YANDEX_ACCESS_KEY_ID=...
+export YANDEX_SECRET_ACCESS_KEY=...
+export YANDEX_BUCKET=your-bucket-name
+# необязательно:
+# export YANDEX_ENDPOINT=https://storage.yandexcloud.net
+# export YANDEX_REGION=ru-central1
+# export YANDEX_PUBLIC_BASE_URL=https://storage.yandexcloud.net/your-bucket-name
+npm run dev
+```
+
+Пример файла `.env` (файл в git не хранится):
+
+```env
+STORAGE_PROVIDER=yandex
+YANDEX_ACCESS_KEY_ID=YCAJEexample
+YANDEX_SECRET_ACCESS_KEY=YCMexample
+YANDEX_BUCKET=polka-photos
+```
+
+При отсутствии обязательных переменных сервер завершится с ошибкой конфигурации.
+Публичный URL объекта по умолчанию: `{YANDEX_ENDPOINT}/{YANDEX_BUCKET}/{key}`.
 
 ## API
 
