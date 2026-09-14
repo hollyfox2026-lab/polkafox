@@ -14,7 +14,15 @@
     <meta name="description" content="Личный гардероб обуви: карточки, фото, размер, сезоны" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="manifest" href="./manifest.webmanifest" />
+    <script>
+      (function () {
+        if (/iPad|iPhone|iPod/.test(navigator.userAgent)) return;
+        var link = document.createElement("link");
+        link.rel = "manifest";
+        link.href = "./manifest.webmanifest";
+        document.head.appendChild(link);
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -22,8 +30,8 @@
       rel="stylesheet"
     />
     <title>Полка — моя обувь</title>
-    <script type="module" crossorigin src="./assets/index-CUOmc4ed.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-CKRmwvOx.css">
+    <script type="module" crossorigin src="./assets/index-D4b2K0lr.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-RvNYw1L9.css">
   </head>
   <body>
     <div id="root"></div>
