@@ -36,9 +36,7 @@ export function DiskBar({
   const label = session
     ? status === "syncing"
       ? "Синхронизация…"
-      : status === "error"
-        ? "Ошибка Диска"
-        : connectedLabel(session)
+      : connectedLabel(session)
     : "Войти в Диск";
 
   return (

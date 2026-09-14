@@ -38,8 +38,8 @@ export function syncErrorMessage(error: unknown): string {
     return error.message;
   }
   if (error instanceof Error) {
-    if (error.message === "Failed to fetch" || /network/i.test(error.message)) {
-      return "Нет сети. Карточки сохранены только на этом устройстве.";
+    if (error.message === "Failed to fetch" || /network|cors/i.test(error.message)) {
+      return "Браузер не смог обратиться к Яндекс Диску. Карточки остались на этом устройстве. Нажмите «Синхронизировать» ещё раз.";
     }
     return error.message;
   }

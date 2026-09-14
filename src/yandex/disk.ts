@@ -38,17 +38,33 @@ export class YandexDiskError extends Error {
   }
 }
 
+function catalogPath(folder: string): string {
+  const root = folder.endsWith("/") ? folder : `${folder}/`;
+  return `${root}${CATALOG_NAME}`;
+}
+
 export function createYandexDiskClient(
   token: string,
   fetchImpl: typeof fetch = fetch,
 ): YandexDiskClient {
   let root: string | null = null;
+  let authScheme: "OAuth" | "Bearer" = "OAuth";
 
   async function api(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
-    headers.set("Authorization", `OAuth ${token}`);
-    if (!headers.has("Accept")) headers.set("Accept", "application/json");
-    return fetchImpl(`${YANDEX_DISK_API}${path}`, { ...init, headers });
+    headers.set("Authorization", `${authScheme} ${token}`);
+    headers.set("Accept", "application/json");
+    headers.set("Content-Type", "application/json");
+    const response = await fetchImpl(`${YANDEX_DISK_API}${path}`, { ...init, headers });
+    if (response.status === 401 && authScheme === "OAuth") {
+      authScheme = "Bearer";
+      const retryHeaders = new Headers(init.headers);
+      retryHeaders.set("Authorization", `Bearer ${token}`);
+      retryHeaders.set("Accept", "application/json");
+      retryHeaders.set("Content-Type", "application/json");
+      return fetchImpl(`${YANDEX_DISK_API}${path}`, { ...init, headers: retryHeaders });
+    }
+    return response;
   }
 
   async function readError(response: Response): Promise<YandexDiskError> {
@@ -73,12 +89,29 @@ export function createYandexDiskClient(
     return (await response.json()) as T;
   }
 
-  async function tryFolder(path: string): Promise<boolean> {
+  async function probeFolder(path: string): Promise<boolean> {
     const encoded = encodeURIComponent(path);
-    const response = await api(`/resources?path=${encoded}`, { method: "PUT" });
-    if (response.ok || response.status === 409) return true;
-    if (response.status === 403 || response.status === 404) return false;
+    const response = await api(`/resources?path=${encoded}`);
+    if (response.ok) return true;
+    if (response.status === 404) {
+      const created = await api(`/resources?path=${encoded}`, { method: "PUT" });
+      return created.ok || created.status === 409;
+    }
+    if (response.status === 403) return false;
+    if (response.status === 401) throw await readError(response);
     throw await readError(response);
+  }
+
+  async function putToUploader(href: string, body: string): Promise<void> {
+    // application/json на загрузчике вызывает CORS preflight и часто ломает запись из браузера.
+    const uploaded = await fetchImpl(href, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain;charset=UTF-8" },
+      body,
+    });
+    if (!uploaded.ok && uploaded.status !== 201 && uploaded.status !== 202) {
+      throw new YandexDiskError("Не удалось сохранить каталог на Диск.", uploaded.status);
+    }
   }
 
   return {
@@ -92,11 +125,11 @@ export function createYandexDiskClient(
 
     async ensureFolder() {
       if (root) return root;
-      if (await tryFolder(APP_FOLDER)) {
+      if (await probeFolder(APP_FOLDER)) {
         root = APP_FOLDER;
         return root;
       }
-      if (await tryFolder(FALLBACK_FOLDER)) {
+      if (await probeFolder(FALLBACK_FOLDER)) {
         root = FALLBACK_FOLDER;
         return root;
       }
@@ -108,7 +141,7 @@ export function createYandexDiskClient(
 
     async downloadCatalog() {
       const folder = await this.ensureFolder();
-      const path = encodeURIComponent(`${folder}/${CATALOG_NAME}`);
+      const path = encodeURIComponent(catalogPath(folder));
       const meta = await api(`/resources/download?path=${path}`);
       if (meta.status === 404) return null;
       if (!meta.ok) throw await readError(meta);
@@ -125,17 +158,9 @@ export function createYandexDiskClient(
 
     async uploadCatalog(items) {
       const folder = await this.ensureFolder();
-      const path = encodeURIComponent(`${folder}/${CATALOG_NAME}`);
+      const path = encodeURIComponent(catalogPath(folder));
       const link = await apiJson<DiskLink>(`/resources/upload?path=${path}&overwrite=true`);
-      const body = JSON.stringify(toCatalogFile(items));
-      const uploaded = await fetchImpl(link.href, {
-        method: (link.method || "PUT").toUpperCase(),
-        headers: { "Content-Type": "application/json" },
-        body,
-      });
-      if (!uploaded.ok && uploaded.status !== 201 && uploaded.status !== 202) {
-        throw new YandexDiskError("Не удалось сохранить каталог на Диск.", uploaded.status);
-      }
+      await putToUploader(link.href, JSON.stringify(toCatalogFile(items)));
     },
   };
 }
