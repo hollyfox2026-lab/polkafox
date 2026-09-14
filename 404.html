@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Полка</title>
+    <script>
+      location.replace("./" + location.search + location.hash);
+    </script>
+  </head>
+  <body>
+    <p><a id="go" href="./">Открыть Полку</a></p>
+    <script>
+      const link = document.getElementById("go");
+      if (link) link.setAttribute("href", "./" + location.search + location.hash);
+    </script>
+  </body>
+</html>
