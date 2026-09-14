@@ -12,6 +12,7 @@ export const YANDEX_SCOPE = "cloud_api:disk.app_folder";
 
 export const APP_FOLDER = "app:/";
 export const CATALOG_NAME = "catalog.json";
+export const PHOTOS_DIR = "photos";
 export const FALLBACK_FOLDER = "disk:/Полка";
 
 export const SESSION_STORAGE_KEY = "polka-yandex-session";

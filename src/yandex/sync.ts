@@ -10,11 +10,13 @@ export interface SyncResult {
   items: Shoe[];
   pulled: boolean;
   pushed: boolean;
+  photoCount: number;
 }
 
 /**
  * Сначала читает Диск, затем сливает с локальной копией.
- * Пустой клиент (новая иконка на экране Домой) не записывает на Диск пустой каталог.
+ * Фотографии качаются и пишутся отдельными файлами.
+ * Пустой клиент (иконка на экране Домой) не записывает на Диск пустой каталог.
  */
 export async function syncWithDisk(
   db: WardrobeDb,
@@ -28,27 +30,72 @@ export async function syncWithDisk(
     remote = await disk.downloadCatalog();
   } catch (error) {
     if (localActive.length === 0) throw error;
-    await disk.uploadCatalog(local);
+    await pushAll(disk, local);
     await db.putAll(local);
-    return { items: local, pulled: false, pushed: true };
+    return {
+      items: local,
+      pulled: false,
+      pushed: true,
+      photoCount: localActive.filter((item) => item.photo).length,
+    };
   }
 
   const remoteItems = remote?.items ?? [];
   const merged = mergeCatalogs(local, remoteItems);
-  const mergedActive = activeShoes(merged);
-  await db.putAll(merged);
+  const withPhotos = await fillMissingPhotos(merged, remoteItems, disk);
+  const mergedActive = activeShoes(withPhotos);
+  await db.putAll(withPhotos);
 
-  const nothingToPublish = mergedActive.length === 0;
-  if (nothingToPublish) {
-    return { items: merged, pulled: remote !== null, pushed: false };
+  if (mergedActive.length === 0) {
+    return { items: withPhotos, pulled: remote !== null, pushed: false, photoCount: 0 };
   }
 
-  await disk.uploadCatalog(merged);
+  await pushAll(disk, withPhotos);
   return {
-    items: merged,
+    items: withPhotos,
     pulled: remote !== null,
     pushed: true,
+    photoCount: mergedActive.filter((item) => item.photo).length,
   };
+}
+
+async function fillMissingPhotos(
+  merged: Shoe[],
+  remoteItems: Shoe[],
+  disk: YandexDiskClient,
+): Promise<Shoe[]> {
+  const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
+  const next: Shoe[] = [];
+  for (const item of merged) {
+    if (item.deletedAt || item.photo) {
+      next.push(item);
+      continue;
+    }
+    const remote = remoteById.get(item.id);
+    if (remote?.photo) {
+      next.push({ ...item, photo: remote.photo, hasPhoto: true });
+      continue;
+    }
+    if (remote?.hasPhoto) {
+      try {
+        const photo = await disk.downloadPhoto(item.id);
+        next.push(photo ? { ...item, photo, hasPhoto: true } : item);
+      } catch {
+        next.push(item);
+      }
+      continue;
+    }
+    next.push(item);
+  }
+  return next;
+}
+
+async function pushAll(disk: YandexDiskClient, items: Shoe[]): Promise<void> {
+  for (const item of activeShoes(items)) {
+    if (!item.photo) continue;
+    await disk.uploadPhoto(item.id, item.photo);
+  }
+  await disk.uploadCatalog(items);
 }
 
 export function syncErrorMessage(error: unknown): string {

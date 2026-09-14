@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeCatalogs, parseCatalog, toCatalogFile } from "../src/catalog";
+import { mergeCatalogs, parseCatalog, toCatalogFile, toDiskCatalog } from "../src/catalog";
 import type { Shoe } from "../src/types";
 
 function shoe(partial: Partial<Shoe> & Pick<Shoe, "id" | "name" | "updatedAt">): Shoe {
@@ -100,5 +100,33 @@ describe("parseCatalog", () => {
   it("отбрасывает записи без id", () => {
     const parsed = parseCatalog({ version: 1, updatedAt: 1, items: [{ name: "нет id" }] });
     expect(parsed.items).toEqual([]);
+  });
+
+  it("читает признак hasPhoto без встроенного снимка", () => {
+    const parsed = parseCatalog({
+      version: 2,
+      updatedAt: 1,
+      items: [{ id: "1", name: "Кеды", photo: null, hasPhoto: true, updatedAt: 1, createdAt: 1 }],
+    });
+    expect(parsed.items[0].photo).toBeNull();
+    expect(parsed.items[0].hasPhoto).toBe(true);
+  });
+});
+
+describe("toDiskCatalog", () => {
+  it("убирает data URL и оставляет hasPhoto", () => {
+    const file = toDiskCatalog(
+      [
+        shoe({
+          id: "1",
+          name: "Кеды",
+          updatedAt: 9,
+          photo: "data:image/jpeg;base64,aGk=",
+        }),
+      ],
+      9,
+    );
+    expect(file.items[0].photo).toBeNull();
+    expect(file.items[0].hasPhoto).toBe(true);
   });
 });

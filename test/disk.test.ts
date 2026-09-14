@@ -20,7 +20,7 @@ function shoe(): Shoe {
     color: "белые",
     seasons: ["summer"],
     description: "на каждый день",
-    photo: "data:image/jpeg;base64,qq",
+    photo: "data:image/jpeg;base64,aGk=",
     createdAt: 1,
     updatedAt: 2,
     deletedAt: null,
@@ -61,8 +61,67 @@ describe("Yandex Disk client", () => {
     const put = calls.find((call) => call.url === "https://uploader.test/put");
     expect(put?.method).toBe("PUT");
     expect(put?.contentType).toBe("text/plain;charset=UTF-8");
-    expect(put?.body).toContain("data:image/jpeg;base64,qq");
+    expect(put?.body).not.toContain("data:image/jpeg;base64");
+    expect(put?.body).toContain('"hasPhoto":true');
     expect(put?.body).toContain("Кеды");
+  });
+
+  it("пишет фото отдельным файлом без Content-Type", async () => {
+    const calls: Array<{ url: string; method: string; contentType?: string | null; bodyKind?: string }> =
+      [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const headers = new Headers(init?.headers);
+      const body = init?.body;
+      calls.push({
+        url,
+        method,
+        contentType: headers.get("Content-Type"),
+        bodyKind: body instanceof ArrayBuffer ? "buffer" : typeof body,
+      });
+      if (url.startsWith(YANDEX_DISK_API) && url.includes("/resources?") && method === "GET") {
+        return jsonResponse({ type: "dir" });
+      }
+      if (url.includes("/resources/upload")) {
+        expect(url).toContain(encodeURIComponent("app:/photos/s1.jpg"));
+        return jsonResponse({ href: "https://uploader.test/photo", method: "PUT" });
+      }
+      if (url === "https://uploader.test/photo") {
+        return new Response(null, { status: 201 });
+      }
+      throw new Error(`unexpected ${method} ${url}`);
+    };
+
+    const client = createYandexDiskClient("token", fetchImpl);
+    await client.uploadPhoto("s1", "data:image/jpeg;base64,aGk=");
+    const put = calls.find((call) => call.url === "https://uploader.test/photo");
+    expect(put?.method).toBe("PUT");
+    expect(put?.contentType).toBeNull();
+    expect(put?.bodyKind).toBe("buffer");
+  });
+
+  it("скачивает фото и возвращает data URL", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/resources?") && !url.includes("download") && method === "GET") {
+        return jsonResponse({ type: "dir" });
+      }
+      if (url.includes("/resources/download")) {
+        expect(url).toContain(encodeURIComponent("app:/photos/s1.jpg"));
+        return jsonResponse({ href: "https://downloader.test/photo", method: "GET" });
+      }
+      if (url === "https://downloader.test/photo") {
+        return new Response(new Uint8Array([104, 105]), {
+          status: 200,
+          headers: { "Content-Type": "image/jpeg" },
+        });
+      }
+      throw new Error(`unexpected ${method} ${url}`);
+    };
+    const client = createYandexDiskClient("token", fetchImpl);
+    await expect(client.downloadPhoto("s1")).resolves.toBe("data:image/jpeg;base64,aGk=");
   });
 
   it("скачивает каталог по одноразовой ссылке", async () => {
@@ -89,7 +148,7 @@ describe("Yandex Disk client", () => {
     const client = createYandexDiskClient("token", fetchImpl);
     const downloaded = await client.downloadCatalog();
     expect(downloaded?.items[0].name).toBe("Кеды");
-    expect(downloaded?.items[0].photo).toBe("data:image/jpeg;base64,qq");
+    expect(downloaded?.items[0].photo).toBe("data:image/jpeg;base64,aGk=");
   });
 
   it("считает отсутствующий файл пустым каталогом", async () => {

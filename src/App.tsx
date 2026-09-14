@@ -56,6 +56,16 @@ export function App() {
       setShoes(result.items);
       setLastSyncAt(Date.now());
       setSyncStatus("synced");
+      const count = activeShoes(result.items).length;
+      if (count > 0 && result.pulled) {
+        setBanner(`С Яндекс Диска загружено: ${count} ${pairWord(count)}.`);
+      } else if (count > 0 && result.pushed) {
+        setBanner(`На Яндекс Диск записано: ${count} ${pairWord(count)}.`);
+      } else if (count === 0 && result.pulled) {
+        setBanner(
+          "На Яндекс Диске пока нет карточек. Откройте Полку в Safari, где фото уже есть, дождитесь записи на Диск, затем нажмите «Синхронизировать» здесь.",
+        );
+      }
     } catch (error) {
       setSyncStatus("error");
       setSyncError(syncErrorMessage(error));
@@ -164,7 +174,7 @@ export function App() {
       ? session
         ? "Это окно с экрана «Домой». У него своя память, не общая с Safari. Если полка пустая, нажмите «Синхронизировать»: фото подтянутся с Яндекс Диска."
         : "Это окно с экрана «Домой». Фото из Safari сюда сами не копируются. Войдите в Яндекс Диск, чтобы загрузить каталог."
-      : "Значок на экране «Домой» открывает отдельную копию Полки. Там нужно войти в Яндекс Диск ещё раз — тогда появятся те же фото."
+        : "Значок с экрана «Домой» должен открывать ту же вкладку Safari. Если полка пустая — удалите старый значок и добавьте страницу из Safari ещё раз."
     : null;
 
   return (

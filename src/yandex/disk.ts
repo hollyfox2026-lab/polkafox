@@ -1,6 +1,6 @@
-import { APP_FOLDER, CATALOG_NAME, FALLBACK_FOLDER, YANDEX_DISK_API } from "./config";
+import { APP_FOLDER, CATALOG_NAME, FALLBACK_FOLDER, PHOTOS_DIR, YANDEX_DISK_API } from "./config";
 import type { CatalogFile } from "../types";
-import { parseCatalog, toCatalogFile } from "../catalog";
+import { parseCatalog, toDiskCatalog } from "../catalog";
 import type { Shoe } from "../types";
 
 export interface DiskUser {
@@ -18,6 +18,8 @@ export interface YandexDiskClient {
   ensureFolder(): Promise<string>;
   downloadCatalog(): Promise<CatalogFile | null>;
   uploadCatalog(items: Shoe[]): Promise<void>;
+  downloadPhoto(id: string): Promise<string | null>;
+  uploadPhoto(id: string, dataUrl: string): Promise<void>;
 }
 
 interface DiskErrorBody {
@@ -38,9 +40,39 @@ export class YandexDiskError extends Error {
   }
 }
 
+function folderRoot(folder: string): string {
+  return folder.endsWith("/") ? folder : `${folder}/`;
+}
+
 function catalogPath(folder: string): string {
-  const root = folder.endsWith("/") ? folder : `${folder}/`;
-  return `${root}${CATALOG_NAME}`;
+  return `${folderRoot(folder)}${CATALOG_NAME}`;
+}
+
+function photosDir(folder: string): string {
+  return `${folderRoot(folder)}${PHOTOS_DIR}`;
+}
+
+function photoPath(folder: string, id: string): string {
+  return `${photosDir(folder)}/${id}.jpg`;
+}
+
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const data = dataUrl.split(",")[1];
+  if (!data) throw new Error("Фото повреждено: нет данных.");
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  // Пустой MIME: иначе PUT image/jpeg вызывает CORS preflight и запись с телефона падает.
+  return new Blob([bytes]);
+}
+
+export async function blobToDataUrl(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const mime = blob.type || "image/jpeg";
+  return `data:${mime};base64,${btoa(binary)}`;
 }
 
 export function createYandexDiskClient(
@@ -54,14 +86,14 @@ export function createYandexDiskClient(
     const headers = new Headers(init.headers);
     headers.set("Authorization", `${authScheme} ${token}`);
     headers.set("Accept", "application/json");
-    headers.set("Content-Type", "application/json");
+    if (init.body != null) headers.set("Content-Type", "application/json");
     const response = await fetchImpl(`${YANDEX_DISK_API}${path}`, { ...init, headers });
     if (response.status === 401 && authScheme === "OAuth") {
       authScheme = "Bearer";
       const retryHeaders = new Headers(init.headers);
       retryHeaders.set("Authorization", `Bearer ${token}`);
       retryHeaders.set("Accept", "application/json");
-      retryHeaders.set("Content-Type", "application/json");
+      if (init.body != null) retryHeaders.set("Content-Type", "application/json");
       return fetchImpl(`${YANDEX_DISK_API}${path}`, { ...init, headers: retryHeaders });
     }
     return response;
@@ -102,16 +134,34 @@ export function createYandexDiskClient(
     throw await readError(response);
   }
 
-  async function putToUploader(href: string, body: string): Promise<void> {
-    // application/json на загрузчике вызывает CORS preflight и часто ломает запись из браузера.
-    const uploaded = await fetchImpl(href, {
-      method: "PUT",
-      headers: { "Content-Type": "text/plain;charset=UTF-8" },
-      body,
-    });
+  async function putToUploader(href: string, body: Blob | string): Promise<void> {
+    // text/plain — CORS-safelist; JSON и image/* на загрузчике вызывают preflight.
+    const uploaded = await fetchImpl(
+      href,
+      typeof body === "string"
+        ? {
+            method: "PUT",
+            headers: { "Content-Type": "text/plain;charset=UTF-8" },
+            body,
+          }
+        : { method: "PUT", body: await body.arrayBuffer() },
+    );
     if (!uploaded.ok && uploaded.status !== 201 && uploaded.status !== 202) {
-      throw new YandexDiskError("Не удалось сохранить каталог на Диск.", uploaded.status);
+      throw new YandexDiskError("Не удалось сохранить файл на Диск.", uploaded.status);
     }
+  }
+
+  async function downloadByPath(path: string): Promise<Response | null> {
+    const meta = await api(`/resources/download?path=${encodeURIComponent(path)}`);
+    if (meta.status === 404) return null;
+    if (!meta.ok) throw await readError(meta);
+    const link = (await meta.json()) as DiskLink;
+    const file = await fetchImpl(link.href);
+    if (file.status === 404) return null;
+    if (!file.ok) {
+      throw new YandexDiskError("Не удалось скачать файл с Диска.", file.status);
+    }
+    return file;
   }
 
   return {
@@ -127,32 +177,24 @@ export function createYandexDiskClient(
       if (root) return root;
       if (await probeFolder(APP_FOLDER)) {
         root = APP_FOLDER;
-        return root;
-      }
-      if (await probeFolder(FALLBACK_FOLDER)) {
+      } else if (await probeFolder(FALLBACK_FOLDER)) {
         root = FALLBACK_FOLDER;
-        return root;
+      } else {
+        throw new YandexDiskError(
+          "Нет доступа к папке приложения на Диске. Проверьте права cloud_api:disk.app_folder или чтение/запись.",
+          403,
+        );
       }
-      throw new YandexDiskError(
-        "Нет доступа к папке приложения на Диске. Проверьте права cloud_api:disk.app_folder или чтение/запись.",
-        403,
-      );
+      await probeFolder(photosDir(root));
+      return root;
     },
 
     async downloadCatalog() {
       const folder = await this.ensureFolder();
-      const path = encodeURIComponent(catalogPath(folder));
-      const meta = await api(`/resources/download?path=${path}`);
-      if (meta.status === 404) return null;
-      if (!meta.ok) throw await readError(meta);
-      const link = (await meta.json()) as DiskLink;
-      const file = await fetchImpl(link.href);
-      if (file.status === 404) return null;
-      if (!file.ok) {
-        throw new YandexDiskError("Не удалось скачать каталог с Диска.", file.status);
-      }
+      const file = await downloadByPath(catalogPath(folder));
+      if (!file) return null;
       const text = await file.text();
-      if (!text.trim()) return toCatalogFile([]);
+      if (!text.trim()) return { version: 2, updatedAt: 0, items: [] };
       return parseCatalog(JSON.parse(text) as unknown);
     },
 
@@ -160,7 +202,21 @@ export function createYandexDiskClient(
       const folder = await this.ensureFolder();
       const path = encodeURIComponent(catalogPath(folder));
       const link = await apiJson<DiskLink>(`/resources/upload?path=${path}&overwrite=true`);
-      await putToUploader(link.href, JSON.stringify(toCatalogFile(items)));
+      await putToUploader(link.href, JSON.stringify(toDiskCatalog(items)));
+    },
+
+    async downloadPhoto(id) {
+      const folder = await this.ensureFolder();
+      const file = await downloadByPath(photoPath(folder, id));
+      if (!file) return null;
+      return blobToDataUrl(await file.blob());
+    },
+
+    async uploadPhoto(id, dataUrl) {
+      const folder = await this.ensureFolder();
+      const path = encodeURIComponent(photoPath(folder, id));
+      const link = await apiJson<DiskLink>(`/resources/upload?path=${path}&overwrite=true`);
+      await putToUploader(link.href, dataUrlToBlob(dataUrl));
     },
   };
 }

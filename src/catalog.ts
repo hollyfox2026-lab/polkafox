@@ -47,6 +47,19 @@ export function toCatalogFile(items: Shoe[], now = Date.now()): CatalogFile {
   };
 }
 
+/** Каталог для Диска: фотографии отдельно, в JSON только признак hasPhoto. */
+export function toDiskCatalog(items: Shoe[], now = Date.now()): CatalogFile {
+  return {
+    version: CATALOG_VERSION,
+    updatedAt: Math.max(now, catalogUpdatedAt(items)),
+    items: items.map((item) => ({
+      ...cloneShoe(item),
+      photo: null,
+      hasPhoto: Boolean(item.photo) || Boolean(item.hasPhoto),
+    })),
+  };
+}
+
 export function parseCatalog(raw: unknown): CatalogFile {
   if (!raw || typeof raw !== "object") {
     throw new Error("Каталог на Диске повреждён: ожидался объект JSON.");
@@ -100,6 +113,9 @@ export function normalizeShoe(raw: unknown): Shoe | null {
     seasons,
     description: typeof item.description === "string" ? item.description : "",
     photo: typeof item.photo === "string" && item.photo.startsWith("data:") ? item.photo : null,
+    hasPhoto:
+      Boolean(item.hasPhoto) ||
+      (typeof item.photo === "string" && item.photo.startsWith("data:")),
     createdAt,
     updatedAt,
     deletedAt,

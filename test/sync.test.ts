@@ -44,70 +44,79 @@ function shoe(id: string, name: string, updatedAt: number, extra: Partial<Shoe> 
   };
 }
 
+function stubDisk(partial: Partial<YandexDiskClient> = {}): YandexDiskClient {
+  return {
+    async getUser() {
+      return { login: "fox", displayName: "Fox" };
+    },
+    async ensureFolder() {
+      return "app:/";
+    },
+    async downloadCatalog() {
+      return null;
+    },
+    async uploadCatalog() {},
+    async downloadPhoto() {
+      return null;
+    },
+    async uploadPhoto() {},
+    ...partial,
+  };
+}
+
 describe("syncWithDisk", () => {
   it("загружает каталог с Диска на пустое устройство", async () => {
     const remoteItems = [shoe("r1", "Сапоги с Диска", 10)];
-    const disk: YandexDiskClient = {
-      async getUser() {
-        return { login: "fox", displayName: "Fox" };
-      },
-      async ensureFolder() {
-        return "app:/polka";
-      },
-      async downloadCatalog() {
-        return { version: 1, updatedAt: 10, items: remoteItems };
-      },
-      async uploadCatalog() {},
-    };
-    const db = memoryDb();
-    const result = await syncWithDisk(db, disk);
+    const result = await syncWithDisk(
+      memoryDb(),
+      stubDisk({
+        async downloadCatalog() {
+          return { version: 1, updatedAt: 10, items: remoteItems };
+        },
+      }),
+    );
     expect(result.pulled).toBe(true);
     expect(activeShoes(result.items)[0].name).toBe("Сапоги с Диска");
-    expect((await db.listAll())[0].photo).toContain("data:image/jpeg");
+    expect(result.items[0].photo).toContain("data:image/jpeg");
   });
 
   it("отправляет локальный каталог, если на Диске пусто", async () => {
     let uploaded: Shoe[] = [];
-    const disk: YandexDiskClient = {
-      async getUser() {
-        return { login: "fox", displayName: "Fox" };
-      },
-      async ensureFolder() {
-        return "app:/polka";
-      },
-      async downloadCatalog() {
-        return null;
-      },
-      async uploadCatalog(items) {
-        uploaded = items;
-      },
-    };
+    const photos: string[] = [];
     const local = [shoe("l1", "Локальные кеды", 5)];
-    const result = await syncWithDisk(memoryDb(local), disk);
+    const result = await syncWithDisk(
+      memoryDb(local),
+      stubDisk({
+        async uploadCatalog(items) {
+          uploaded = items;
+        },
+        async uploadPhoto(id) {
+          photos.push(id);
+        },
+      }),
+    );
     expect(result.pulled).toBe(false);
     expect(uploaded[0].name).toBe("Локальные кеды");
-    expect(uploaded[0].photo).toContain("data:image/jpeg");
+    expect(photos).toEqual(["l1"]);
+    expect(result.pushed).toBe(true);
+    expect(result.photoCount).toBe(1);
   });
 
   it("сливает карточки с двух устройств и сохраняет обе", async () => {
     const diskStore: { catalog: CatalogFile | null } = {
       catalog: { version: 1, updatedAt: 8, items: [shoe("d1", "Дисковые", 8)] },
     };
-    const disk: YandexDiskClient = {
-      async getUser() {
-        return { login: "fox", displayName: "Fox" };
-      },
-      async ensureFolder() {
-        return "app:/polka";
-      },
-      async downloadCatalog() {
-        return diskStore.catalog;
-      },
-      async uploadCatalog(items) {
-        diskStore.catalog = { version: 1, updatedAt: Date.now(), items };
-      },
-    };
-    const result = await syncWithDisk(memoryDb([shoe("l1", "Локальные", 3)]), disk);
+    const result = await syncWithDisk(
+      memoryDb([shoe("l1", "Локальные", 3)]),
+      stubDisk({
+        async downloadCatalog() {
+          return diskStore.catalog;
+        },
+        async uploadCatalog(items) {
+          diskStore.catalog = { version: 1, updatedAt: Date.now(), items };
+        },
+      }),
+    );
     const names = activeShoes(result.items)
       .map((item) => item.name)
       .sort();
@@ -116,66 +125,51 @@ describe("syncWithDisk", () => {
 
   it("не записывает на Диск пустой каталог с нового устройства", async () => {
     let uploaded: Shoe[] | null = null;
-    const disk: YandexDiskClient = {
-      async getUser() {
-        return { login: "fox", displayName: "Fox" };
-      },
-      async ensureFolder() {
-        return "app:/";
-      },
-      async downloadCatalog() {
-        return null;
-      },
-      async uploadCatalog(items) {
-        uploaded = items;
-      },
-    };
-    const result = await syncWithDisk(memoryDb(), disk);
+    const result = await syncWithDisk(
+      memoryDb(),
+      stubDisk({
+        async uploadCatalog(items) {
+          uploaded = items;
+        },
+      }),
+    );
     expect(result.pushed).toBe(false);
     expect(uploaded).toBeNull();
     expect(result.items).toEqual([]);
   });
 
-  it("на пустом устройстве забирает фото с Диска и не затирает их", async () => {
-    const remoteItems = [shoe("r1", "Сапоги с Диска", 10)];
-    let uploaded: Shoe[] = [];
-    const disk: YandexDiskClient = {
-      async getUser() {
-        return { login: "fox", displayName: "Fox" };
-      },
-      async ensureFolder() {
-        return "app:/";
-      },
-      async downloadCatalog() {
-        return { version: 1, updatedAt: 10, items: remoteItems };
-      },
-      async uploadCatalog(items) {
-        uploaded = items;
-      },
-    };
-    const result = await syncWithDisk(memoryDb(), disk);
+  it("на пустом устройстве качает фото отдельным файлом", async () => {
+    const remoteMeta = [shoe("r1", "Сапоги с Диска", 10, { photo: null, hasPhoto: true })];
+    const result = await syncWithDisk(
+      memoryDb(),
+      stubDisk({
+        async downloadCatalog() {
+          return { version: 2, updatedAt: 10, items: remoteMeta };
+        },
+        async downloadPhoto() {
+          return "data:image/jpeg;base64,from-disk";
+        },
+      }),
+    );
     expect(result.pulled).toBe(true);
-    expect(activeShoes(result.items)[0].photo).toContain("data:image/jpeg");
-    expect(uploaded[0].photo).toContain("data:image/jpeg");
+    expect(activeShoes(result.items)[0].photo).toBe("data:image/jpeg;base64,from-disk");
   });
 
   it("не считает ошибку чтения Диска пустым каталогом", async () => {
     let uploaded = false;
-    const disk: YandexDiskClient = {
-      async getUser() {
-        return { login: "fox", displayName: "Fox" };
-      },
-      async ensureFolder() {
-        return "app:/";
-      },
-      async downloadCatalog() {
-        throw new Error("Failed to fetch");
-      },
-      async uploadCatalog() {
-        uploaded = true;
-      },
-    };
-    await expect(syncWithDisk(memoryDb(), disk)).rejects.toThrow(/Failed to fetch/);
+    await expect(
+      syncWithDisk(
+        memoryDb(),
+        stubDisk({
+          async downloadCatalog() {
+            throw new Error("Failed to fetch");
+          },
+          async uploadCatalog() {
+            uploaded = true;
+          },
+        }),
+      ),
+    ).rejects.toThrow(/Failed to fetch/);
     expect(uploaded).toBe(false);
   });
 });

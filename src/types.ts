@@ -43,6 +43,7 @@ export interface Shoe {
   seasons: Season[];
   description: string;
   photo: string | null;
+  hasPhoto?: boolean;
   createdAt: number;
   updatedAt: number;
   deletedAt?: number | null;
@@ -70,7 +71,7 @@ export const EMPTY_DRAFT: ShoeDraft = {
   photo: null,
 };
 
-export const CATALOG_VERSION = 1;
+export const CATALOG_VERSION = 2;
 
 export interface CatalogFile {
   version: number;
