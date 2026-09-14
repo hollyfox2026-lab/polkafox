@@ -65,27 +65,31 @@ async function fillMissingPhotos(
   disk: YandexDiskClient,
 ): Promise<Shoe[]> {
   const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
-  const next: Shoe[] = [];
-  for (const item of merged) {
-    if (item.deletedAt || item.photo) {
-      next.push(item);
-      continue;
-    }
+  const next = [...merged];
+  const jobs: Array<{ index: number; id: string }> = [];
+  for (let index = 0; index < next.length; index += 1) {
+    const item = next[index];
+    if (!item || item.deletedAt || item.photo) continue;
     const remote = remoteById.get(item.id);
     if (remote?.photo) {
-      next.push({ ...item, photo: remote.photo, hasPhoto: true });
+      next[index] = { ...item, photo: remote.photo, hasPhoto: true };
       continue;
     }
-    if (remote?.hasPhoto) {
+    if (remote) jobs.push({ index, id: item.id });
+  }
+  const results = await Promise.all(
+    jobs.map(async (job) => {
       try {
-        const photo = await disk.downloadPhoto(item.id);
-        next.push(photo ? { ...item, photo, hasPhoto: true } : item);
+        return { ...job, photo: await disk.downloadPhoto(job.id) };
       } catch {
-        next.push(item);
+        return { ...job, photo: null };
       }
-      continue;
-    }
-    next.push(item);
+    }),
+  );
+  for (const result of results) {
+    const current = next[result.index];
+    if (!current || !result.photo) continue;
+    next[result.index] = { ...current, photo: result.photo, hasPhoto: true };
   }
   return next;
 }

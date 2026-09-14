@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAppleMobile, isStandaloneDisplay } from "../src/display";
+import { isAppleMobile, isIsolatedHomeScreen, isStandaloneDisplay } from "../src/display";
 
 describe("display mode", () => {
   it("распознаёт iPhone", () => {
@@ -11,5 +11,11 @@ describe("display mode", () => {
     expect(isStandaloneDisplay({ matches: true }, {})).toBe(true);
     expect(isStandaloneDisplay({ matches: false }, { standalone: true })).toBe(true);
     expect(isStandaloneDisplay({ matches: false }, {})).toBe(false);
+  });
+
+  it("считает minimal-ui отдельной копией, не Safari", () => {
+    expect(isIsolatedHomeScreen([{ matches: false }, { matches: true }], {})).toBe(true);
+    expect(isIsolatedHomeScreen([{ matches: false }, { matches: false }], {})).toBe(false);
+    expect(isIsolatedHomeScreen([{ matches: false }], { standalone: true })).toBe(true);
   });
 });

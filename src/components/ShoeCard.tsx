@@ -21,7 +21,7 @@ export function EmptyState({ hasCollection, season, onAdd }: EmptyStateProps) {
       </p>
       {season === "all" || !hasCollection ? (
         <p className="install-hint">
-          На iPhone удалите старый значок Полки и добавьте вкладку из Safari снова — откроется та же полка с фото.
+          На iPhone значок не копирует полку из Safari сам. Удалите старый значок и добавьте вкладку из Safari — либо войдите в Диск по коду в этом окне.
         </p>
       ) : null}
       {hasCollection ? null : (

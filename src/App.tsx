@@ -17,11 +17,13 @@ import {
   type Shoe,
   type ShoeDraft,
 } from "./types";
+import { DeviceLogin } from "./components/DeviceLogin";
 import { createYandexDiskClient, YandexDiskError } from "./yandex/disk";
+import { requestDeviceCode, pollDeviceToken, type DeviceAuthRequest } from "./yandex/device";
 import { consumeOAuthRedirect, startYandexLogin, type OAuthToken } from "./yandex/oauth";
 import { clearSession, loadSession, saveSession, type YandexSession } from "./yandex/session";
 import { syncErrorMessage, syncWithDisk, type SyncStatus } from "./yandex/sync";
-import { isAppleMobile, isStandaloneDisplay } from "./display";
+import { isAppleMobile, isIsolatedHomeScreen } from "./display";
 
 export function App() {
   const [shoes, setShoes] = useState<Shoe[]>([]);
@@ -34,6 +36,7 @@ export function App() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [deviceAuth, setDeviceAuth] = useState<DeviceAuthRequest | null>(null);
   const syncing = useRef(false);
   const pendingPush = useRef(false);
 
@@ -110,6 +113,65 @@ export function App() {
     void runSync(session);
   }, [loaded, session, runSync]);
 
+  useEffect(() => {
+    if (!loaded || !session) return;
+    function refresh() {
+      if (document.visibilityState === "hidden") return;
+      const next = loadSession();
+      if (next) void runSync(next);
+    }
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("pageshow", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("pageshow", refresh);
+    };
+  }, [loaded, session, runSync]);
+
+  useEffect(() => {
+    if (!deviceAuth) return;
+    const request = deviceAuth;
+    let cancelled = false;
+    let delay = request.intervalMs;
+    let timer = 0;
+
+    async function tick() {
+      if (cancelled) return;
+      if (Date.now() > request.expiresAt) {
+        setDeviceAuth(null);
+        setBanner("Код Яндекса истёк. Нажмите «Войти в Диск» ещё раз.");
+        return;
+      }
+      const result = await pollDeviceToken(request.deviceCode);
+      if (cancelled) return;
+      if (result.kind === "token") {
+        setDeviceAuth(null);
+        const nextSession = await sessionFromToken(result.token);
+        setSession(nextSession);
+        setBanner("Яндекс Диск подключён. Каталог загружается.");
+        return;
+      }
+      if (result.kind === "denied") {
+        setDeviceAuth(null);
+        setBanner(result.message);
+        return;
+      }
+      if (result.kind === "slow") delay += 3000;
+      timer = window.setTimeout(() => void tick(), delay);
+    }
+
+    function onVisible() {
+      if (document.visibilityState === "visible") void tick();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [deviceAuth]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return activeShoes(shoes).filter((shoe) => {
@@ -168,14 +230,30 @@ export function App() {
 
   const activeCount = activeShoes(shoes).length;
   const appleMobile = isAppleMobile();
-  const standalone = isStandaloneDisplay();
+  const isolated = isIsolatedHomeScreen();
   const homeScreenHint = appleMobile
-    ? standalone
+    ? isolated
       ? session
-        ? "Это окно с экрана «Домой». У него своя память, не общая с Safari. Если полка пустая, нажмите «Синхронизировать»: фото подтянутся с Яндекс Диска."
-        : "Это окно с экрана «Домой». Фото из Safari сюда сами не копируются. Войдите в Яндекс Диск, чтобы загрузить каталог."
-        : "Значок с экрана «Домой» должен открывать ту же вкладку Safari. Если полка пустая — удалите старый значок и добавьте страницу из Safari ещё раз."
+        ? "Это отдельная копия с экрана «Домой», не общая с Safari. Нажмите «Синхронизировать», чтобы забрать каталог с Яндекс Диска."
+        : "Это отдельная копия с экрана «Домой». Обычный вход уходит в Safari и оставляет это окно пустым. Нажмите «Войти в Диск» — Яндекс покажет код для этого окна. Либо удалите значок и добавьте вкладку из Safari."
+      : "Значок должен открывать ту же вкладку Safari. Если полка на значке пустая — удалите старый значок и добавьте страницу из Safari ещё раз."
     : null;
+
+  async function handleLogin() {
+    if (isolated) {
+      try {
+        const request = await requestDeviceCode();
+        setDeviceAuth(request);
+        setBanner("Введите код на странице Яндекса и вернитесь сюда. Тогда полка подтянется с Диска в это окно.");
+      } catch (error) {
+        setBanner(
+          `${error instanceof Error ? error.message : "Не удалось начать вход."} Удалите значок Полки и добавьте вкладку из Safari — откроется та же полка.`,
+        );
+      }
+      return;
+    }
+    await startYandexLogin();
+  }
 
   return (
     <>
@@ -194,7 +272,7 @@ export function App() {
               status={session ? syncStatus : "offline"}
               error={syncError}
               lastSyncAt={lastSyncAt}
-              onLogin={() => void startYandexLogin()}
+              onLogin={() => void handleLogin()}
               onLogout={() => {
                 clearSession();
                 setSession(null);
@@ -285,6 +363,15 @@ export function App() {
           title={route.id ? "Редактирование" : "Новая пара"}
           onCancel={() => setRoute(current ? { name: "detail", id: current.id } : { name: "list" })}
           onSave={(draft) => void saveDraft(draft, route.id)}
+        />
+      ) : null}
+      {deviceAuth ? (
+        <DeviceLogin
+          request={deviceAuth}
+          onOpenYandex={() => {
+            window.open(deviceAuth.verificationUrl, "_blank", "noopener");
+          }}
+          onCancel={() => setDeviceAuth(null)}
         />
       ) : null}
     </>

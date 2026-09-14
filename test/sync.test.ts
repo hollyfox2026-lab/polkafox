@@ -138,8 +138,8 @@ describe("syncWithDisk", () => {
     expect(result.items).toEqual([]);
   });
 
-  it("на пустом устройстве качает фото отдельным файлом", async () => {
-    const remoteMeta = [shoe("r1", "Сапоги с Диска", 10, { photo: null, hasPhoto: true })];
+  it("на пустом устройстве качает фото даже без hasPhoto", async () => {
+    const remoteMeta = [shoe("r1", "Сапоги с Диска", 10, { photo: null })];
     const result = await syncWithDisk(
       memoryDb(),
       stubDisk({
