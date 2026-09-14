@@ -10,8 +10,11 @@ export const YANDEX_DISK_API = "https://cloud-api.yandex.net/v1/disk";
 /** Запрашиваем папку приложения; если в кабинете заданы read/write, Яндекс выдаст настроенные права. */
 export const YANDEX_SCOPE = "cloud_api:disk.app_folder";
 
-export const APP_FOLDER = "app:/polka";
+export const APP_FOLDER = "app:/";
 export const CATALOG_NAME = "catalog.json";
+export const PHOTOS_DIR = "photos";
+/** Запасная копия catalog.json в свойствах папок API — без downloader.disk. */
+export const INDEX_DIR = "index";
 export const FALLBACK_FOLDER = "disk:/Полка";
 
 export const SESSION_STORAGE_KEY = "polka-yandex-session";

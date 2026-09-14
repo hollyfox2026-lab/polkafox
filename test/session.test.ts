@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadSession, saveSession, clearSession, isSessionExpired } from "../src/yandex/session";
+import { loadSession, saveSession, clearSession, isSessionExpired, sessionFromUnknown, serializeSession } from "../src/yandex/session";
 import { SESSION_STORAGE_KEY } from "../src/yandex/config";
 
 function memoryStorage(): Storage {
@@ -59,5 +59,19 @@ describe("Yandex session", () => {
     saveSession(session, storage);
     expect(isSessionExpired(session, 100)).toBe(true);
     expect(loadSession(storage, 100)).toBeNull();
+  });
+
+  it("читает вход, вставленный с другого окна", () => {
+    const session = {
+      accessToken: "y0_pasted_token_value",
+      tokenType: "bearer",
+      expiresAt: Date.now() + 10_000,
+      login: "fox",
+      displayName: "Лиса",
+    };
+    expect(sessionFromUnknown(JSON.stringify(session))?.accessToken).toBe("y0_pasted_token_value");
+    expect(sessionFromUnknown("y0_pasted_token_value")?.accessToken).toBe("y0_pasted_token_value");
+    expect(sessionFromUnknown("{")).toBeNull();
+    expect(serializeSession(session)).toContain("y0_pasted_token_value");
   });
 });

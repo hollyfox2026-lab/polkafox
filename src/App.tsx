@@ -17,10 +17,21 @@ import {
   type Shoe,
   type ShoeDraft,
 } from "./types";
+import { DeviceLogin } from "./components/DeviceLogin";
+import { LoginSheet } from "./components/LoginSheet";
 import { createYandexDiskClient, YandexDiskError } from "./yandex/disk";
+import { requestDeviceCode, pollDeviceToken, type DeviceAuthRequest } from "./yandex/device";
 import { consumeOAuthRedirect, startYandexLogin, type OAuthToken } from "./yandex/oauth";
-import { clearSession, loadSession, saveSession, type YandexSession } from "./yandex/session";
+import {
+  clearSession,
+  loadSession,
+  saveSession,
+  serializeSession,
+  sessionFromUnknown,
+  type YandexSession,
+} from "./yandex/session";
 import { syncErrorMessage, syncWithDisk, type SyncStatus } from "./yandex/sync";
+import { isAppleMobile, isIsolatedHomeScreen } from "./display";
 
 export function App() {
   const [shoes, setShoes] = useState<Shoe[]>([]);
@@ -33,6 +44,10 @@ export function App() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [deviceAuth, setDeviceAuth] = useState<DeviceAuthRequest | null>(null);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [pasteValue, setPasteValue] = useState("");
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const syncing = useRef(false);
   const pendingPush = useRef(false);
 
@@ -55,9 +70,21 @@ export function App() {
       setShoes(result.items);
       setLastSyncAt(Date.now());
       setSyncStatus("synced");
+      const count = activeShoes(result.items).length;
+      if (count > 0 && result.pulled) {
+        setBanner(`С Яндекс Диска загружено: ${count} ${pairWord(count)}.`);
+      } else if (count > 0 && result.pushed) {
+        setBanner(`На Яндекс Диск записано: ${count} ${pairWord(count)}.`);
+      } else if (count === 0 && result.pulled) {
+        setBanner(
+          "На Яндекс Диске пока нет карточек. Откройте Полку в Safari, где фото уже есть, дождитесь записи на Диск, затем нажмите «Синхронизировать» здесь.",
+        );
+      }
     } catch (error) {
+      const message = syncErrorMessage(error);
       setSyncStatus("error");
-      setSyncError(syncErrorMessage(error));
+      setSyncError(message);
+      setBanner(message);
       if (error instanceof YandexDiskError && error.status === 401) {
         setBanner("Яндекс не принял доступ к Диску. Откройте меню Диска и войдите снова.");
       }
@@ -98,6 +125,65 @@ export function App() {
     if (!loaded || !session) return;
     void runSync(session);
   }, [loaded, session, runSync]);
+
+  useEffect(() => {
+    if (!loaded || !session) return;
+    function refresh() {
+      if (document.visibilityState === "hidden") return;
+      const next = loadSession();
+      if (next) void runSync(next);
+    }
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("pageshow", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("pageshow", refresh);
+    };
+  }, [loaded, session, runSync]);
+
+  useEffect(() => {
+    if (!deviceAuth) return;
+    const request = deviceAuth;
+    let cancelled = false;
+    let delay = request.intervalMs;
+    let timer = 0;
+
+    async function tick() {
+      if (cancelled) return;
+      if (Date.now() > request.expiresAt) {
+        setDeviceAuth(null);
+        setBanner("Код Яндекса истёк. Нажмите «Войти в Диск» ещё раз.");
+        return;
+      }
+      const result = await pollDeviceToken(request.deviceCode);
+      if (cancelled) return;
+      if (result.kind === "token") {
+        setDeviceAuth(null);
+        const nextSession = await sessionFromToken(result.token);
+        setSession(nextSession);
+        setBanner("Яндекс Диск подключён. Каталог загружается.");
+        return;
+      }
+      if (result.kind === "denied") {
+        setDeviceAuth(null);
+        setBanner(result.message);
+        return;
+      }
+      if (result.kind === "slow") delay += 3000;
+      timer = window.setTimeout(() => void tick(), delay);
+    }
+
+    function onVisible() {
+      if (document.visibilityState === "visible") void tick();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [deviceAuth]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -156,6 +242,64 @@ export function App() {
   }
 
   const activeCount = activeShoes(shoes).length;
+  const appleMobile = isAppleMobile();
+  const isolated = isIsolatedHomeScreen();
+  const homeScreenHint = appleMobile
+    ? isolated
+      ? session
+        ? "Это отдельная копия с экрана «Домой». Нажмите «Синхронизировать», чтобы забрать каталог с Яндекс Диска."
+        : "Это отдельная копия с экрана «Домой». Нажмите «Войти в Диск»: вставьте вход, скопированный в Safari, либо войдите через Яндекс."
+      : "Чтобы полка была и на значке, в Safari откройте меню Диска и нажмите «Скопировать вход». Затем откройте значок и вставьте вход."
+    : null;
+
+  function applyPastedSession() {
+    const next = sessionFromUnknown(pasteValue);
+    if (!next) {
+      setPasteError("Не удалось прочитать вход. Скопируйте его заново в Safari: меню Диска → «Скопировать вход».");
+      return;
+    }
+    saveSession(next);
+    setSession(next);
+    setLoginOpen(false);
+    setPasteValue("");
+    setPasteError(null);
+    setBanner("Яндекс Диск подключён. Каталог загружается.");
+  }
+
+  async function handleDeviceLogin() {
+    try {
+      const request = await requestDeviceCode();
+      setLoginOpen(false);
+      setDeviceAuth(request);
+      setBanner("Введите код на странице Яндекса и вернитесь сюда.");
+    } catch (error) {
+      setPasteError(
+        error instanceof Error
+          ? `${error.message} Вставьте вход из Safari или войдите через Яндекс.`
+          : "Яндекс не выдал код. Вставьте вход из Safari.",
+      );
+    }
+  }
+
+  async function handleLogin() {
+    setPasteError(null);
+    if (appleMobile) {
+      setLoginOpen(true);
+      return;
+    }
+    await startYandexLogin();
+  }
+
+  async function copySession() {
+    if (!session) return;
+    const text = serializeSession(session);
+    try {
+      await navigator.clipboard.writeText(text);
+      setBanner("Вход скопирован. Откройте Полку с экрана «Домой» → «Войти в Диск» → вставьте вход.");
+    } catch {
+      window.prompt("Скопируйте вход и вставьте его в Полку на значке:", text);
+    }
+  }
 
   return (
     <>
@@ -174,7 +318,7 @@ export function App() {
               status={session ? syncStatus : "offline"}
               error={syncError}
               lastSyncAt={lastSyncAt}
-              onLogin={() => void startYandexLogin()}
+              onLogin={() => void handleLogin()}
               onLogout={() => {
                 clearSession();
                 setSession(null);
@@ -185,6 +329,7 @@ export function App() {
               onSync={() => {
                 if (session) void runSync(session);
               }}
+              onCopySession={() => void copySession()}
             />
           </div>
         </header>
@@ -196,7 +341,8 @@ export function App() {
             </button>
           </p>
         ) : null}
-        {!session ? (
+        {homeScreenHint ? <p className="local-hint">{homeScreenHint}</p> : null}
+        {!session && !homeScreenHint ? (
           <p className="local-hint">
             Карточки хранятся на этом устройстве. Чтобы открыть тот же каталог на другом устройстве,
             войдите через Яндекс.
@@ -264,6 +410,32 @@ export function App() {
           title={route.id ? "Редактирование" : "Новая пара"}
           onCancel={() => setRoute(current ? { name: "detail", id: current.id } : { name: "list" })}
           onSave={(draft) => void saveDraft(draft, route.id)}
+        />
+      ) : null}
+      {loginOpen ? (
+        <LoginSheet
+          pasteValue={pasteValue}
+          pasteError={pasteError}
+          onPasteValue={(value) => {
+            setPasteValue(value);
+            setPasteError(null);
+          }}
+          onApplyPaste={applyPastedSession}
+          onYandex={() => void startYandexLogin()}
+          onDeviceCode={() => void handleDeviceLogin()}
+          onCancel={() => {
+            setLoginOpen(false);
+            setPasteError(null);
+          }}
+        />
+      ) : null}
+      {deviceAuth ? (
+        <DeviceLogin
+          request={deviceAuth}
+          onOpenYandex={() => {
+            window.open(deviceAuth.verificationUrl, "_blank", "noopener");
+          }}
+          onCancel={() => setDeviceAuth(null)}
         />
       ) : null}
     </>

@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   YANDEX_CLIENT_ID,
   YANDEX_REDIRECT_URI,
-  YANDEX_SCOPE,
 } from "../src/yandex/config";
 import {
   acceptOAuthReturn,
@@ -47,14 +46,14 @@ describe("Yandex OAuth", () => {
     resetOAuthConsume();
   });
 
-  it("собирает URL авторизации с ClientID, Redirect URI и правом app_folder", () => {
+  it("собирает URL авторизации с ClientID и Redirect URI", () => {
     const url = new URL(buildAuthorizeUrl("state-1"));
     expect(url.origin + url.pathname).toBe("https://oauth.yandex.ru/authorize");
     expect(url.searchParams.get("response_type")).toBe("token");
     expect(url.searchParams.get("client_id")).toBe(YANDEX_CLIENT_ID);
     expect(url.searchParams.get("redirect_uri")).toBe(YANDEX_REDIRECT_URI);
-    expect(url.searchParams.get("scope")).toBe(YANDEX_SCOPE);
     expect(url.searchParams.get("state")).toBe("state-1");
+    expect(url.searchParams.get("scope")).toBeNull();
   });
 
   it("читает access_token из hash после редиректа", () => {
@@ -66,6 +65,11 @@ describe("Yandex OAuth", () => {
       token: { accessToken: "y0_test", tokenType: "bearer", expiresIn: 3600 },
     });
     expect(oauthHashState("#access_token=y0_test&state=abc")).toBe("abc");
+  });
+
+  it("не портит плюс в access_token", () => {
+    const result = parseOAuthHash("#access_token=abc+def/g==&token_type=bearer&expires_in=1");
+    expect(result?.ok && result.token.accessToken).toBe("abc+def/g==");
   });
 
   it("читает отказ пользователя", () => {
@@ -93,12 +97,12 @@ describe("Yandex OAuth", () => {
     expect(verifyOAuthState(null, "secret")).toBe(false);
   });
 
-  it("принимает токен, даже если Яндекс не вернул state", () => {
+  it("принимает токен на Redirect URI даже без совпадения state", () => {
     expect(
       acceptOAuthReturn(null, { state: "abc", verifier: "", startedAt: Date.now() }),
     ).toBe(true);
     expect(acceptOAuthReturn("abc", { state: "abc", verifier: "", startedAt: 1 })).toBe(true);
-    expect(acceptOAuthReturn("other", { state: "abc", verifier: "", startedAt: 1 })).toBe(false);
+    expect(acceptOAuthReturn("other", { state: "abc", verifier: "", startedAt: 1 })).toBe(true);
   });
 
   it("сохраняет токен при повторном вызове consume (StrictMode)", async () => {

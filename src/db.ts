@@ -69,6 +69,7 @@ export function createWardrobeDb(factory?: IDBFactoryLike): WardrobeDb {
     },
     async putAll(items) {
       await withStore("readwrite", async (store) => {
+        await requestToPromise(store.clear());
         for (const item of items) {
           await requestToPromise(store.put(item));
         }

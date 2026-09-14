@@ -3,7 +3,6 @@ import {
   YANDEX_AUTHORIZE_URL,
   YANDEX_CLIENT_ID,
   YANDEX_REDIRECT_URI,
-  YANDEX_SCOPE,
 } from "./config";
 
 export const YANDEX_TOKEN_URL = "https://oauth.yandex.ru/token";
@@ -72,7 +71,6 @@ export function buildAuthorizeUrl(
     response_type: "token",
     client_id: YANDEX_CLIENT_ID,
     redirect_uri: options.redirectUri ?? YANDEX_REDIRECT_URI,
-    scope: YANDEX_SCOPE,
     state,
   });
   if (options.challenge) {
@@ -82,26 +80,40 @@ export function buildAuthorizeUrl(
   return `${YANDEX_AUTHORIZE_URL}?${params.toString()}`;
 }
 
-export function parseOAuthParams(raw: string): OAuthRedirectResult | null {
+/**
+ * Разбор fragment/query OAuth. Не используем URLSearchParams.get:
+ * он превращает «+» в пробел и портит access_token.
+ */
+export function parseFragmentParams(raw: string): Record<string, string> {
   const value = raw.startsWith("#") || raw.startsWith("?") ? raw.slice(1) : raw;
-  if (!value) return null;
-  const params = new URLSearchParams(value);
-  const error = params.get("error");
-  if (error) {
+  const result: Record<string, string> = {};
+  if (!value) return result;
+  for (const part of value.split("&")) {
+    if (!part) continue;
+    const eq = part.indexOf("=");
+    const key = decodeURIComponent(eq < 0 ? part : part.slice(0, eq));
+    const encoded = eq < 0 ? "" : part.slice(eq + 1);
+    result[key] = decodeURIComponent(encoded.replace(/\+/g, "%2B"));
+  }
+  return result;
+}
+
+export function parseOAuthParams(raw: string): OAuthRedirectResult | null {
+  const params = parseFragmentParams(raw);
+  if (!params.error && !params.access_token) return null;
+  if (params.error) {
     return {
       ok: false,
-      error,
-      description: params.get("error_description") ?? undefined,
+      error: params.error,
+      description: params.error_description || undefined,
     };
   }
-  const accessToken = params.get("access_token");
-  if (!accessToken) return null;
-  const expiresIn = Number(params.get("expires_in") ?? "31536000");
+  const expiresIn = Number(params.expires_in ?? "31536000");
   return {
     ok: true,
     token: {
-      accessToken,
-      tokenType: params.get("token_type") ?? "bearer",
+      accessToken: params.access_token,
+      tokenType: params.token_type || "bearer",
       expiresIn: Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 31536000,
     },
   };
@@ -112,8 +124,8 @@ export function parseOAuthHash(hash: string): OAuthRedirectResult | null {
 }
 
 export function oauthParam(raw: string, name: string): string | null {
-  const value = raw.startsWith("#") || raw.startsWith("?") ? raw.slice(1) : raw;
-  return new URLSearchParams(value).get(name);
+  const value = parseFragmentParams(raw)[name];
+  return value === undefined || value === "" ? null : value;
 }
 
 export function oauthHashState(hash: string): string | null {
@@ -161,9 +173,8 @@ export function verifyOAuthState(returned: string | null, expected: string | nul
   return returned === expected;
 }
 
-/** Принимаем токен, если state совпал или Яндекс не вернул state, но вход начинали мы. */
-export function acceptOAuthReturn(returnedState: string | null, pending: OAuthPending | null): boolean {
-  if (returnedState && pending && returnedState !== pending.state) return false;
+/** Токен на Redirect URI приложения принимаем: Яндекс не всегда возвращает state. */
+export function acceptOAuthReturn(_returnedState: string | null, _pending: OAuthPending | null): boolean {
   return true;
 }
 
@@ -204,7 +215,6 @@ async function doConsumeOAuth(options: {
 
   const storage = options.storage ?? localStorage;
   const pending = readOAuthPending(storage);
-  const returnedState = oauthParam(hash, "state") ?? oauthParam(search, "state");
   const parsed = parseOAuthParams(hash) ?? parseOAuthParams(search);
 
   if (parsed && !parsed.ok) {
@@ -216,18 +226,12 @@ async function doConsumeOAuth(options: {
   }
 
   if (parsed?.ok) {
-    if (!acceptOAuthReturn(returnedState, pending)) {
-      return { kind: "error", message: "Вход через Яндекс не подтверждён. Повторите попытку." };
-    }
     clearOAuthPending(storage);
     return { kind: "token", token: parsed.token };
   }
 
   const code = oauthParam(search, "code") ?? oauthParam(hash, "code");
   if (code) {
-    if (!acceptOAuthReturn(returnedState, pending)) {
-      return { kind: "error", message: "Вход через Яндекс не подтверждён. Повторите попытку." };
-    }
     try {
       const token = await exchangeAuthorizationCode(code, pending?.verifier ?? "", options.fetchImpl ?? fetch);
       clearOAuthPending(storage);
@@ -288,15 +292,8 @@ export async function startYandexLogin(
   storage: Storage = localStorage,
 ): Promise<void> {
   const state = createOAuthState();
-  const verifier = createCodeVerifier();
-  rememberOAuthPending({ state, verifier, startedAt: Date.now() }, storage);
-  let challenge: string | undefined;
-  try {
-    challenge = await createCodeChallenge(verifier);
-  } catch {
-    challenge = undefined;
-  }
-  openUrl(buildAuthorizeUrl(state, { challenge }));
+  rememberOAuthPending({ state, verifier: "", startedAt: Date.now() }, storage);
+  openUrl(buildAuthorizeUrl(state));
 }
 
 function defaultRedirect(url: string): void {

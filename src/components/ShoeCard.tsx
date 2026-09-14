@@ -21,7 +21,7 @@ export function EmptyState({ hasCollection, season, onAdd }: EmptyStateProps) {
       </p>
       {season === "all" || !hasCollection ? (
         <p className="install-hint">
-          На телефоне: «Поделиться» → «На экран Домой», чтобы открывать как приложение.
+          На iPhone значок — отдельная полка. В Safari скопируйте вход в меню Диска, откройте значок и вставьте его в «Войти в Диск».
         </p>
       ) : null}
       {hasCollection ? null : (
@@ -39,7 +39,7 @@ export function ShoeCard({ shoe, onOpen }: { shoe: Shoe; onOpen: () => void }) {
   return (
     <button className="card" onClick={onOpen}>
       <div className="photo">
-        {shoe.photo ? <img src={shoe.photo} alt="" /> : <ShoePlaceholder />}
+        {shoe.photo ? <img src={shoe.photo} alt="" referrerPolicy="no-referrer" /> : <ShoePlaceholder />}
         <div className="mini-seasons">
           {shoe.seasons.map((season) => (
             <span className={`dot ${season}`} key={season} />

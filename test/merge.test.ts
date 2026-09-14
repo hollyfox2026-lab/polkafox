@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeCatalogs, parseCatalog, toCatalogFile } from "../src/catalog";
+import { mergeCatalogs, parseCatalog, toCatalogFile, toDiskCatalog } from "../src/catalog";
 import type { Shoe } from "../src/types";
 
 function shoe(partial: Partial<Shoe> & Pick<Shoe, "id" | "name" | "updatedAt">): Shoe {
@@ -65,6 +65,40 @@ describe("mergeCatalogs", () => {
     const remote = [shoe({ id: "1", name: "Кеды", updatedAt: 10, photo: null })];
     expect(mergeCatalogs(local, remote)[0].photo).toBe("data:image/jpeg;base64,abc");
   });
+
+  it("не затирает фото более новой записью без снимка", () => {
+    const local = [
+      shoe({
+        id: "1",
+        name: "Кеды",
+        updatedAt: 10,
+        photo: "data:image/jpeg;base64,abc",
+      }),
+    ];
+    const remote = [shoe({ id: "1", name: "Кеды", updatedAt: 20, photo: null })];
+    expect(mergeCatalogs(local, remote)[0].photo).toBe("data:image/jpeg;base64,abc");
+    expect(mergeCatalogs(local, remote)[0].updatedAt).toBe(20);
+  });
+
+  it("не подменяет data URL превью-ссылкой", () => {
+    const local = [
+      shoe({
+        id: "1",
+        name: "Кеды",
+        updatedAt: 10,
+        photo: "data:image/jpeg;base64,abc",
+      }),
+    ];
+    const remote = [
+      shoe({
+        id: "1",
+        name: "Кеды",
+        updatedAt: 20,
+        photo: "https://preview.test/xl",
+      }),
+    ];
+    expect(mergeCatalogs(local, remote)[0].photo).toBe("data:image/jpeg;base64,abc");
+  });
 });
 
 describe("parseCatalog", () => {
@@ -86,5 +120,51 @@ describe("parseCatalog", () => {
   it("отбрасывает записи без id", () => {
     const parsed = parseCatalog({ version: 1, updatedAt: 1, items: [{ name: "нет id" }] });
     expect(parsed.items).toEqual([]);
+  });
+
+  it("читает признак hasPhoto без встроенного снимка", () => {
+    const parsed = parseCatalog({
+      version: 2,
+      updatedAt: 1,
+      items: [{ id: "1", name: "Кеды", photo: null, hasPhoto: true, updatedAt: 1, createdAt: 1 }],
+    });
+    expect(parsed.items[0].photo).toBeNull();
+    expect(parsed.items[0].hasPhoto).toBe(true);
+  });
+
+  it("принимает https-превью как фото", () => {
+    const parsed = parseCatalog({
+      version: 2,
+      updatedAt: 1,
+      items: [
+        {
+          id: "1",
+          name: "Кеды",
+          photo: "https://preview.test/xl",
+          hasPhoto: true,
+          updatedAt: 1,
+          createdAt: 1,
+        },
+      ],
+    });
+    expect(parsed.items[0].photo).toBe("https://preview.test/xl");
+  });
+});
+
+describe("toDiskCatalog", () => {
+  it("убирает data URL и оставляет hasPhoto", () => {
+    const file = toDiskCatalog(
+      [
+        shoe({
+          id: "1",
+          name: "Кеды",
+          updatedAt: 9,
+          photo: "data:image/jpeg;base64,aGk=",
+        }),
+      ],
+      9,
+    );
+    expect(file.items[0].photo).toBeNull();
+    expect(file.items[0].hasPhoto).toBe(true);
   });
 });

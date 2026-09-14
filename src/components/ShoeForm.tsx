@@ -55,7 +55,9 @@ export function ShoeForm({ initial, title, onCancel, onSave }: ShoeFormProps) {
           </button>
         </div>
         <h2 className="display">{title}</h2>
-        <div className="hero-photo">{draft.photo ? <img src={draft.photo} alt="" /> : <ShoePlaceholder />}</div>
+        <div className="hero-photo">
+          {draft.photo ? <img src={draft.photo} alt="" referrerPolicy="no-referrer" /> : <ShoePlaceholder />}
+        </div>
         <div className="photo-pick">
           <label>
             Камера
