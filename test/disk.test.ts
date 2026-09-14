@@ -10,6 +10,30 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function folderApiResponse(url: string, method: string): Response | null {
+  if (!url.includes("/resources?") || url.includes("/resources/download") || url.includes("/resources/upload")) {
+    return null;
+  }
+  if (method === "GET") {
+    const path = new URL(url).searchParams.get("path") ?? "";
+    if (/\/index\/c\d+$/.test(path)) {
+      return jsonResponse({ type: "dir", custom_properties: { p: "" } });
+    }
+    if (path.endsWith("/index")) {
+      return jsonResponse({
+        type: "dir",
+        custom_properties: { n: "1" },
+        _embedded: { items: [], total: 0 },
+      });
+    }
+    return jsonResponse({ type: "dir", name: "app" });
+  }
+  if (method === "PUT" || method === "PATCH" || method === "DELETE") {
+    return jsonResponse({}, method === "PUT" ? 201 : 200);
+  }
+  return null;
+}
+
 function shoe(): Shoe {
   return {
     id: "s1",
@@ -38,9 +62,8 @@ describe("Yandex Disk client", () => {
       const body = typeof init?.body === "string" ? init.body : undefined;
       calls.push({ url, method, body, contentType: headers.get("Content-Type") });
 
-      if (url.startsWith(YANDEX_DISK_API) && url.includes("/resources?") && method === "GET") {
-        return jsonResponse({ type: "dir", name: "app" });
-      }
+      const folder = folderApiResponse(url, method);
+      if (folder) return folder;
       if (url.includes("/resources/upload")) {
         expect(headers.get("Authorization")).toBe("OAuth token");
         expect(url).not.toContain("oauth_token=");
@@ -237,6 +260,116 @@ describe("Yandex Disk client", () => {
     await expect(client.getUser()).rejects.toMatchObject({
       name: "YandexDiskError",
       code: "network",
+    });
+  });
+
+  it("при записи каталога дублирует JSON в индекс папок API", async () => {
+    const patches: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      const headers = new Headers(init?.headers);
+      if (url.includes("/resources/upload")) {
+        return jsonResponse({ href: "https://uploader.test/put", method: "PUT" });
+      }
+      if (url === "https://uploader.test/put") {
+        return new Response(null, { status: 201 });
+      }
+      if (method === "PATCH" && typeof init?.body === "string") {
+        patches.push(init.body);
+        expect(headers.get("Content-Type")).toBe("application/json");
+      }
+      const folder = folderApiResponse(url, method);
+      if (folder) return folder;
+      throw new Error(`unexpected ${method} ${url}`);
+    };
+    const client = createYandexDiskClient("token", fetchImpl);
+    await client.uploadCatalog([shoe()]);
+    const joined = patches.join("");
+    expect(joined).toContain('"n":"1"');
+    expect(joined).toContain("Кеды");
+    expect(joined).not.toContain("data:image/jpeg;base64");
+  });
+
+  it("читает каталог из индекса, если загрузчик файла блокирует CORS", async () => {
+    const catalog = {
+      version: 2,
+      updatedAt: 2,
+      items: [{ ...shoe(), photo: null, hasPhoto: true }],
+    };
+    const payload = JSON.stringify(catalog);
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.startsWith("https://downloader.test/")) {
+        throw new Error("Failed to fetch");
+      }
+      if (url.includes("/resources/download")) {
+        return jsonResponse({ href: "https://downloader.test/file", method: "GET" });
+      }
+      if (method === "GET" && url.includes("/resources?")) {
+        const path = new URL(url).searchParams.get("path") ?? "";
+        if (path.endsWith("/index")) {
+          return jsonResponse({ type: "dir", custom_properties: { n: "1" } });
+        }
+        if (path.endsWith("/index/c000")) {
+          return jsonResponse({ type: "dir", custom_properties: { p: payload } });
+        }
+        if (path.endsWith("catalog.json")) {
+          return jsonResponse({ type: "file", file: "https://downloader.test/file" });
+        }
+        return jsonResponse({ type: "dir" });
+      }
+      throw new Error(`unexpected ${method} ${url}`);
+    };
+    const client = createYandexDiskClient("token", fetchImpl);
+    const downloaded = await client.downloadCatalog();
+    expect(downloaded?.items[0].name).toBe("Кеды");
+    expect(downloaded?.items[0].hasPhoto).toBe(true);
+  });
+
+  it("сохраняет индекс, если загрузчик catalog.json недоступен", async () => {
+    const patches: string[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/resources/upload")) {
+        return jsonResponse({ href: "https://uploader.test/put", method: "PUT" });
+      }
+      if (url === "https://uploader.test/put") throw new Error("Failed to fetch");
+      if (method === "PATCH" && typeof init?.body === "string") patches.push(init.body);
+      const folder = folderApiResponse(url, method);
+      if (folder) return folder;
+      throw new Error(`unexpected ${method} ${url}`);
+    };
+    const client = createYandexDiskClient("token", fetchImpl);
+    await expect(client.uploadCatalog([shoe()])).resolves.toBeUndefined();
+    expect(patches.join("")).toContain("Кеды");
+  });
+
+  it("поясняет, что делать, если нет ни файла, ни индекса", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.startsWith("https://downloader.test/")) throw new Error("Failed to fetch");
+      if (url.includes("/resources/download")) {
+        return jsonResponse({ href: "https://downloader.test/file", method: "GET" });
+      }
+      if (method === "GET" && url.includes("/resources?")) {
+        const path = new URL(url).searchParams.get("path") ?? "";
+        if (path.includes("/index")) return jsonResponse({ error: "DiskNotFoundError" }, 404);
+        if (path.endsWith("catalog.json")) {
+          return jsonResponse({ type: "file", file: "https://downloader.test/file" });
+        }
+        return jsonResponse({ type: "dir" });
+      }
+      throw new Error(`unexpected ${method} ${url}`);
+    };
+    const client = createYandexDiskClient("token", fetchImpl);
+    await expect(client.downloadCatalog()).rejects.toMatchObject({
+      name: "YandexDiskError",
+      code: "network",
+      message: expect.stringMatching(/Safari/),
     });
   });
 });

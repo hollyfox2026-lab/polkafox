@@ -1,4 +1,4 @@
-const CACHE = "polka-v9";
+const CACHE = "polka-v10";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", (event) => {
