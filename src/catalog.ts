@@ -19,17 +19,17 @@ export function mergeCatalogs(local: Shoe[], remote: Shoe[]): Shoe[] {
     if (!normalized) continue;
     const previous = map.get(normalized.id);
     if (!previous || normalized.updatedAt > previous.updatedAt) {
-      const photo =
-        !normalized.deletedAt && !normalized.photo && previous?.photo
-          ? previous.photo
-          : normalized.photo;
-      map.set(normalized.id, { ...normalized, photo });
-    } else if (
-      normalized.updatedAt === previous.updatedAt &&
-      !previous.photo &&
-      normalized.photo
-    ) {
-      map.set(normalized.id, { ...previous, photo: normalized.photo });
+      const photo = normalized.deletedAt
+        ? normalized.photo
+        : preferPhoto(normalized.photo, previous?.photo ?? null);
+      map.set(normalized.id, { ...normalized, photo, hasPhoto: Boolean(normalized.hasPhoto || photo) });
+    } else if (normalized.updatedAt === previous.updatedAt) {
+      const photo = preferPhoto(previous.photo, normalized.photo);
+      map.set(normalized.id, {
+        ...previous,
+        hasPhoto: Boolean(previous.hasPhoto || normalized.hasPhoto || photo),
+        photo,
+      });
     }
   }
   return [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -88,6 +88,24 @@ export function cloneShoe(item: Shoe): Shoe {
   };
 }
 
+/** Снимок в IndexedDB: data URL или https-превью Диска. */
+export function parseStoredPhoto(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.length < 8) return null;
+  if (raw.startsWith("data:image/")) return raw;
+  if (raw.startsWith("https://")) return raw;
+  return null;
+}
+
+export function isInlinePhoto(photo: string | null | undefined): boolean {
+  return Boolean(photo?.startsWith("data:"));
+}
+
+export function preferPhoto(primary: string | null, fallback: string | null): string | null {
+  if (isInlinePhoto(primary)) return primary;
+  if (isInlinePhoto(fallback)) return fallback;
+  return primary || fallback;
+}
+
 export function normalizeShoe(raw: unknown): Shoe | null {
   if (!raw || typeof raw !== "object") return null;
   const item = raw as Partial<Shoe> & { id?: unknown };
@@ -112,10 +130,8 @@ export function normalizeShoe(raw: unknown): Shoe | null {
     color: typeof item.color === "string" ? item.color : "",
     seasons,
     description: typeof item.description === "string" ? item.description : "",
-    photo: typeof item.photo === "string" && item.photo.startsWith("data:") ? item.photo : null,
-    hasPhoto:
-      Boolean(item.hasPhoto) ||
-      (typeof item.photo === "string" && item.photo.startsWith("data:")),
+    photo: parseStoredPhoto(item.photo),
+    hasPhoto: Boolean(item.hasPhoto) || Boolean(parseStoredPhoto(item.photo)),
     createdAt,
     updatedAt,
     deletedAt,

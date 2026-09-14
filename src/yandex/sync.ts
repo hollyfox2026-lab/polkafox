@@ -1,5 +1,5 @@
 import type { Shoe } from "../types";
-import { activeShoes, mergeCatalogs } from "../catalog";
+import { activeShoes, isInlinePhoto, mergeCatalogs } from "../catalog";
 import type { WardrobeDb } from "../db";
 import { YandexDiskError, isBrowserNetworkError, type YandexDiskClient } from "./disk";
 import type { CatalogFile } from "../types";
@@ -69,13 +69,13 @@ async function fillMissingPhotos(
   const jobs: Array<{ index: number; id: string }> = [];
   for (let index = 0; index < next.length; index += 1) {
     const item = next[index];
-    if (!item || item.deletedAt || item.photo) continue;
+    if (!item || item.deletedAt || isInlinePhoto(item.photo)) continue;
     const remote = remoteById.get(item.id);
-    if (remote?.photo) {
+    if (remote?.photo && isInlinePhoto(remote.photo)) {
       next[index] = { ...item, photo: remote.photo, hasPhoto: true };
       continue;
     }
-    if (remote) jobs.push({ index, id: item.id });
+    if (item.photo || remote) jobs.push({ index, id: item.id });
   }
   const results = await Promise.all(
     jobs.map(async (job) => {
@@ -96,7 +96,7 @@ async function fillMissingPhotos(
 
 async function pushAll(disk: YandexDiskClient, items: Shoe[]): Promise<void> {
   for (const item of activeShoes(items)) {
-    if (!item.photo) continue;
+    if (!isInlinePhoto(item.photo) || !item.photo) continue;
     await disk.uploadPhoto(item.id, item.photo);
   }
   await disk.uploadCatalog(items);

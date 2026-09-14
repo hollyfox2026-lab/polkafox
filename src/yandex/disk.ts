@@ -66,6 +66,26 @@ function photoPath(folder: string, id: string): string {
   return `${photosDir(folder)}/${id}.jpg`;
 }
 
+export interface DiskPreviewResource {
+  preview?: string;
+  file?: string;
+  sizes?: Array<{ name?: string; url?: string }>;
+}
+
+const PREVIEW_SIZE_ORDER = ["XXXL", "XXL", "XL", "L", "M", "S"];
+
+/** Превью из метаданных API. Не берём file/ORIGINAL: это тот же downloader без CORS. */
+export function pickDiskPreview(resource: DiskPreviewResource): string | null {
+  const sizes = resource.sizes ?? [];
+  for (const name of PREVIEW_SIZE_ORDER) {
+    const found = sizes.find((item) => item.name === name && item.url);
+    if (found?.url) return found.url;
+  }
+  if (resource.preview) return resource.preview;
+  const any = sizes.find((item) => item.url && item.name !== "ORIGINAL");
+  return any?.url ?? null;
+}
+
 export function dataUrlToBlob(dataUrl: string): Blob {
   const data = dataUrl.split(",")[1];
   if (!data) throw new Error("Фото повреждено: нет данных.");
@@ -157,7 +177,12 @@ export function createYandexDiskClient(
 
   async function rawFetch(url: string, init: RequestInit = {}): Promise<Response> {
     try {
-      return await fetchImpl(url, { ...init, cache: "no-store", credentials: "omit" });
+      return await fetchImpl(url, {
+        ...init,
+        cache: "no-store",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+      });
     } catch (error) {
       throw wrapNetworkError(error);
     }
@@ -362,6 +387,15 @@ export function createYandexDiskClient(
     return parseCatalog(JSON.parse(text) as unknown);
   }
 
+  async function readPhotoPreview(path: string): Promise<string | null> {
+    const response = await api(
+      `/resources?path=${encodeURIComponent(path)}&preview_size=XXXL`,
+    );
+    if (response.status === 404) return null;
+    if (!response.ok) throw await readError(response);
+    return pickDiskPreview((await response.json()) as DiskPreviewResource);
+  }
+
   return {
     async getUser() {
       const info = await apiJson<{ user?: { login?: string; display_name?: string } }>("");
@@ -441,12 +475,26 @@ export function createYandexDiskClient(
 
     async downloadPhoto(id) {
       const folder = await this.ensureFolder();
-      const file = await downloadByPath(photoPath(folder, id));
-      if (!file) return null;
-      return blobToDataUrl(await file.blob());
+      const path = photoPath(folder, id);
+      try {
+        const file = await downloadByPath(path);
+        if (file) return blobToDataUrl(await file.blob());
+      } catch {
+        // Загрузчик файла этому окну недоступен — берём превью из API.
+      }
+      const preview = await readPhotoPreview(path);
+      if (!preview) return null;
+      try {
+        const response = await rawFetch(preview);
+        if (response.ok) return blobToDataUrl(await response.blob());
+      } catch {
+        // Превью как https URL для <img>, без чтения байтов.
+      }
+      return preview;
     },
 
     async uploadPhoto(id, dataUrl) {
+      if (!dataUrl.startsWith("data:")) return;
       const folder = await this.ensureFolder();
       const path = encodeURIComponent(photoPath(folder, id));
       const link = await apiJson<DiskLink>(`/resources/upload?path=${path}&overwrite=true`);

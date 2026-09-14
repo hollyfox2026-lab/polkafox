@@ -79,6 +79,26 @@ describe("mergeCatalogs", () => {
     expect(mergeCatalogs(local, remote)[0].photo).toBe("data:image/jpeg;base64,abc");
     expect(mergeCatalogs(local, remote)[0].updatedAt).toBe(20);
   });
+
+  it("не подменяет data URL превью-ссылкой", () => {
+    const local = [
+      shoe({
+        id: "1",
+        name: "Кеды",
+        updatedAt: 10,
+        photo: "data:image/jpeg;base64,abc",
+      }),
+    ];
+    const remote = [
+      shoe({
+        id: "1",
+        name: "Кеды",
+        updatedAt: 20,
+        photo: "https://preview.test/xl",
+      }),
+    ];
+    expect(mergeCatalogs(local, remote)[0].photo).toBe("data:image/jpeg;base64,abc");
+  });
 });
 
 describe("parseCatalog", () => {
@@ -110,6 +130,24 @@ describe("parseCatalog", () => {
     });
     expect(parsed.items[0].photo).toBeNull();
     expect(parsed.items[0].hasPhoto).toBe(true);
+  });
+
+  it("принимает https-превью как фото", () => {
+    const parsed = parseCatalog({
+      version: 2,
+      updatedAt: 1,
+      items: [
+        {
+          id: "1",
+          name: "Кеды",
+          photo: "https://preview.test/xl",
+          hasPhoto: true,
+          updatedAt: 1,
+          createdAt: 1,
+        },
+      ],
+    });
+    expect(parsed.items[0].photo).toBe("https://preview.test/xl");
   });
 });
 

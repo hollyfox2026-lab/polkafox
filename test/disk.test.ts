@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createYandexDiskClient, YandexDiskError } from "../src/yandex/disk";
+import { createYandexDiskClient, pickDiskPreview, YandexDiskError } from "../src/yandex/disk";
 import { APP_FOLDER, CATALOG_NAME, YANDEX_DISK_API } from "../src/yandex/config";
 import type { Shoe } from "../src/types";
 
@@ -197,6 +197,7 @@ describe("Yandex Disk client", () => {
       expect(url).toBe(`${YANDEX_DISK_API}`);
       expect(headers.get("Authorization")).toBe("OAuth token");
       expect(init?.credentials).toBe("omit");
+      expect(init?.referrerPolicy).toBe("no-referrer");
       return jsonResponse({ user: { login: "fox", display_name: "Лиса" } });
     };
     const client = createYandexDiskClient("token", fetchImpl);
@@ -371,5 +372,58 @@ describe("Yandex Disk client", () => {
       code: "network",
       message: expect.stringMatching(/Safari/),
     });
+  });
+
+  it("берёт превью API, если JPEG с downloader недоступен", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url === "https://downloader.test/photo") throw new Error("Failed to fetch");
+      if (url === "https://preview.test/xl") throw new Error("Failed to fetch");
+      if (url.includes("/resources/download")) {
+        return jsonResponse({ href: "https://downloader.test/photo", method: "GET" });
+      }
+      if (method === "GET" && url.includes("/resources?")) {
+        const parsed = new URL(url);
+        const path = parsed.searchParams.get("path") ?? "";
+        if (parsed.searchParams.get("preview_size") && path.endsWith("s1.jpg")) {
+          return jsonResponse({
+            type: "file",
+            preview: "https://preview.test/small",
+            sizes: [{ name: "XL", url: "https://preview.test/xl" }],
+          });
+        }
+        if (path.endsWith("s1.jpg")) {
+          return jsonResponse({ type: "file", file: "https://downloader.test/photo" });
+        }
+        return jsonResponse({ type: "dir" });
+      }
+      throw new Error(`unexpected ${method} ${url}`);
+    };
+    const client = createYandexDiskClient("token", fetchImpl);
+    await expect(client.downloadPhoto("s1")).resolves.toBe("https://preview.test/xl");
+  });
+
+  it("не отправляет https-превью на загрузчик", async () => {
+    const fetchImpl: typeof fetch = async () => {
+      throw new Error("upload should not run");
+    };
+    const client = createYandexDiskClient("token", fetchImpl);
+    await expect(client.uploadPhoto("s1", "https://preview.test/xl")).resolves.toBeUndefined();
+  });
+});
+
+describe("pickDiskPreview", () => {
+  it("предпочитает XL, а не ORIGINAL", () => {
+    expect(
+      pickDiskPreview({
+        file: "https://downloader.test/original",
+        preview: "https://preview.test/s",
+        sizes: [
+          { name: "ORIGINAL", url: "https://downloader.test/original" },
+          { name: "XL", url: "https://preview.test/xl" },
+        ],
+      }),
+    ).toBe("https://preview.test/xl");
   });
 });

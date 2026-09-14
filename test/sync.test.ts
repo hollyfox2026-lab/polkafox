@@ -155,6 +155,31 @@ describe("syncWithDisk", () => {
     expect(activeShoes(result.items)[0].photo).toBe("data:image/jpeg;base64,from-disk");
   });
 
+  it("не заливает https-превью обратно файлом", async () => {
+    let uploadedPhoto = false;
+    const result = await syncWithDisk(
+      memoryDb(),
+      stubDisk({
+        async downloadCatalog() {
+          return {
+            version: 2,
+            updatedAt: 10,
+            items: [shoe("r1", "Сапоги с Диска", 10, { photo: null, hasPhoto: true })],
+          };
+        },
+        async downloadPhoto() {
+          return "https://preview.test/xl";
+        },
+        async uploadPhoto() {
+          uploadedPhoto = true;
+        },
+      }),
+    );
+    expect(result.items[0].photo).toBe("https://preview.test/xl");
+    expect(uploadedPhoto).toBe(false);
+    expect(result.pushed).toBe(true);
+  });
+
   it("не считает ошибку чтения Диска пустым каталогом", async () => {
     let uploaded = false;
     await expect(

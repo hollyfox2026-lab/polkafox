@@ -22,7 +22,11 @@ export function ShoeDetail({ shoe, onBack, onEdit, onDelete }: ShoeDetailProps) 
           </button>
         </div>
         <div className="hero-photo">
-          {shoe.photo ? <img src={shoe.photo} alt={shoe.name} /> : <ShoePlaceholder />}
+          {shoe.photo ? (
+            <img src={shoe.photo} alt={shoe.name} referrerPolicy="no-referrer" />
+          ) : (
+            <ShoePlaceholder />
+          )}
         </div>
         <h2 className="display">{shoe.name}</h2>
         <p className="lead">{lead}</p>
