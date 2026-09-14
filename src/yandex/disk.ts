@@ -75,28 +75,55 @@ export async function blobToDataUrl(blob: Blob): Promise<string> {
   return `data:${mime};base64,${btoa(binary)}`;
 }
 
+export function diskApiUrl(path: string, token: string): string {
+  const url = new URL(`${YANDEX_DISK_API}${path}`);
+  url.searchParams.set("oauth_token", token);
+  return url.toString();
+}
+
+export function wrapNetworkError(error: unknown): YandexDiskError {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (isBrowserNetworkError(raw)) {
+    return new YandexDiskError(
+      "Это окно не смогло связаться с Яндекс Диском. Нажмите «Синхронизировать» ещё раз.",
+      0,
+      "network",
+    );
+  }
+  return new YandexDiskError(raw || "Не удалось обратиться к Яндекс Диску.", 0, "network");
+}
+
+export function isBrowserNetworkError(message: string): boolean {
+  return /load failed|failed to fetch|networkerror|not allowed to request resource|blocked by cors|the internet connection appears to be offline|cancelled/i.test(
+    message,
+  );
+}
 export function createYandexDiskClient(
   token: string,
   fetchImpl: typeof fetch = fetch,
 ): YandexDiskClient {
   let root: string | null = null;
-  let authScheme: "OAuth" | "Bearer" = "OAuth";
+
+  async function rawFetch(url: string, init: RequestInit = {}): Promise<Response> {
+    try {
+      return await fetchImpl(url, { ...init, cache: "no-store" });
+    } catch (error) {
+      throw wrapNetworkError(error);
+    }
+  }
 
   async function api(path: string, init: RequestInit = {}): Promise<Response> {
+    // oauth_token в query, без Authorization: на iOS PWA заголовок даёт CORS preflight и Load failed.
+    const url = diskApiUrl(path, token);
     const headers = new Headers(init.headers);
-    headers.set("Authorization", `${authScheme} ${token}`);
-    headers.set("Accept", "application/json");
-    if (init.body != null) headers.set("Content-Type", "application/json");
-    const response = await fetchImpl(`${YANDEX_DISK_API}${path}`, { ...init, headers });
-    if (response.status === 401 && authScheme === "OAuth") {
-      authScheme = "Bearer";
-      const retryHeaders = new Headers(init.headers);
-      retryHeaders.set("Authorization", `Bearer ${token}`);
-      retryHeaders.set("Accept", "application/json");
-      if (init.body != null) retryHeaders.set("Content-Type", "application/json");
-      return fetchImpl(`${YANDEX_DISK_API}${path}`, { ...init, headers: retryHeaders });
+    if (init.body != null && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "text/plain;charset=UTF-8");
     }
-    return response;
+    const response = await rawFetch(url, { ...init, headers });
+    if (response.status !== 401) return response;
+    const retryHeaders = new Headers(init.headers);
+    retryHeaders.set("Authorization", `OAuth ${token}`);
+    return rawFetch(`${YANDEX_DISK_API}${path}`, { ...init, headers: retryHeaders });
   }
 
   async function readError(response: Response): Promise<YandexDiskError> {
@@ -135,8 +162,7 @@ export function createYandexDiskClient(
   }
 
   async function putToUploader(href: string, body: Blob | string): Promise<void> {
-    // text/plain — CORS-safelist; JSON и image/* на загрузчике вызывают preflight.
-    const uploaded = await fetchImpl(
+    const uploaded = await rawFetch(
       href,
       typeof body === "string"
         ? {
@@ -151,17 +177,34 @@ export function createYandexDiskClient(
     }
   }
 
-  async function downloadByPath(path: string): Promise<Response | null> {
-    const meta = await api(`/resources/download?path=${encodeURIComponent(path)}`);
-    if (meta.status === 404) return null;
-    if (!meta.ok) throw await readError(meta);
-    const link = (await meta.json()) as DiskLink;
-    const file = await fetchImpl(link.href);
+  async function downloadHref(href: string): Promise<Response | null> {
+    const file = await rawFetch(href);
     if (file.status === 404) return null;
     if (!file.ok) {
       throw new YandexDiskError("Не удалось скачать файл с Диска.", file.status);
     }
     return file;
+  }
+
+  async function downloadByPath(path: string): Promise<Response | null> {
+    const meta = await api(`/resources/download?path=${encodeURIComponent(path)}`);
+    if (meta.status === 404) return downloadFromResource(path);
+    if (!meta.ok) throw await readError(meta);
+    const link = (await meta.json()) as DiskLink;
+    try {
+      return await downloadHref(link.href);
+    } catch {
+      return downloadFromResource(path);
+    }
+  }
+
+  async function downloadFromResource(path: string): Promise<Response | null> {
+    const response = await api(`/resources?path=${encodeURIComponent(path)}`);
+    if (response.status === 404) return null;
+    if (!response.ok) throw await readError(response);
+    const resource = (await response.json()) as { file?: string };
+    if (!resource.file) return null;
+    return downloadHref(resource.file);
   }
 
   return {
@@ -185,7 +228,11 @@ export function createYandexDiskClient(
           403,
         );
       }
-      await probeFolder(photosDir(root));
+      try {
+        await probeFolder(photosDir(root));
+      } catch {
+        // Папка снимков не должна блокировать чтение catalog.json с значка.
+      }
       return root;
     },
 

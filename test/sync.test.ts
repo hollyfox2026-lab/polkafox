@@ -178,6 +178,10 @@ describe("syncErrorMessage", () => {
   it("поясняет истекшую сессию", () => {
     expect(syncErrorMessage(new YandexDiskError("nope", 401))).toMatch(/истекла/i);
   });
+
+  it("поясняет Load failed с iPhone", () => {
+    expect(syncErrorMessage(new Error("Load failed"))).toMatch(/Синхронизировать/i);
+  });
 });
 
 describe("createYandexDiskClient typing smoke", () => {

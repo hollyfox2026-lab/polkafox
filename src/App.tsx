@@ -81,8 +81,10 @@ export function App() {
         );
       }
     } catch (error) {
+      const message = syncErrorMessage(error);
       setSyncStatus("error");
-      setSyncError(syncErrorMessage(error));
+      setSyncError(message);
+      setBanner(message);
       if (error instanceof YandexDiskError && error.status === 401) {
         setBanner("Яндекс не принял доступ к Диску. Откройте меню Диска и войдите снова.");
       }

@@ -1,7 +1,7 @@
 import type { Shoe } from "../types";
 import { activeShoes, mergeCatalogs } from "../catalog";
 import type { WardrobeDb } from "../db";
-import { YandexDiskError, type YandexDiskClient } from "./disk";
+import { YandexDiskError, isBrowserNetworkError, type YandexDiskClient } from "./disk";
 import type { CatalogFile } from "../types";
 
 export type SyncStatus = "idle" | "syncing" | "synced" | "error" | "offline";
@@ -112,8 +112,8 @@ export function syncErrorMessage(error: unknown): string {
     return error.message;
   }
   if (error instanceof Error) {
-    if (error.message === "Failed to fetch" || /network|cors/i.test(error.message)) {
-      return "Браузер не смог обратиться к Яндекс Диску. Карточки остались на этом устройстве. Нажмите «Синхронизировать» ещё раз.";
+    if (error.message === "Failed to fetch" || isBrowserNetworkError(error.message)) {
+      return "Это окно не смогло связаться с Яндекс Диском. Нажмите «Синхронизировать» ещё раз.";
     }
     return error.message;
   }
