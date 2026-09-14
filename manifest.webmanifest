@@ -4,7 +4,7 @@
   "description": "Карточки обуви: фото, размер, описание, сезоны. Синхронизация через Яндекс Диск.",
   "start_url": "./",
   "scope": "./",
-  "display": "browser",
+  "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f3ebe1",
   "theme_color": "#1a120e",
