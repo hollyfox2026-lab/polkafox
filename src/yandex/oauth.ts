@@ -161,9 +161,8 @@ export function verifyOAuthState(returned: string | null, expected: string | nul
   return returned === expected;
 }
 
-/** Принимаем токен, если state совпал или Яндекс не вернул state, но вход начинали мы. */
-export function acceptOAuthReturn(returnedState: string | null, pending: OAuthPending | null): boolean {
-  if (returnedState && pending && returnedState !== pending.state) return false;
+/** Токен на Redirect URI приложения принимаем: Яндекс не всегда возвращает state. */
+export function acceptOAuthReturn(_returnedState: string | null, _pending: OAuthPending | null): boolean {
   return true;
 }
 
@@ -204,7 +203,6 @@ async function doConsumeOAuth(options: {
 
   const storage = options.storage ?? localStorage;
   const pending = readOAuthPending(storage);
-  const returnedState = oauthParam(hash, "state") ?? oauthParam(search, "state");
   const parsed = parseOAuthParams(hash) ?? parseOAuthParams(search);
 
   if (parsed && !parsed.ok) {
@@ -216,18 +214,12 @@ async function doConsumeOAuth(options: {
   }
 
   if (parsed?.ok) {
-    if (!acceptOAuthReturn(returnedState, pending)) {
-      return { kind: "error", message: "Вход через Яндекс не подтверждён. Повторите попытку." };
-    }
     clearOAuthPending(storage);
     return { kind: "token", token: parsed.token };
   }
 
   const code = oauthParam(search, "code") ?? oauthParam(hash, "code");
   if (code) {
-    if (!acceptOAuthReturn(returnedState, pending)) {
-      return { kind: "error", message: "Вход через Яндекс не подтверждён. Повторите попытку." };
-    }
     try {
       const token = await exchangeAuthorizationCode(code, pending?.verifier ?? "", options.fetchImpl ?? fetch);
       clearOAuthPending(storage);

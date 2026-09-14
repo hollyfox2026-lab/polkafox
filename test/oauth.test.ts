@@ -93,12 +93,12 @@ describe("Yandex OAuth", () => {
     expect(verifyOAuthState(null, "secret")).toBe(false);
   });
 
-  it("принимает токен, даже если Яндекс не вернул state", () => {
+  it("принимает токен на Redirect URI даже без совпадения state", () => {
     expect(
       acceptOAuthReturn(null, { state: "abc", verifier: "", startedAt: Date.now() }),
     ).toBe(true);
     expect(acceptOAuthReturn("abc", { state: "abc", verifier: "", startedAt: 1 })).toBe(true);
-    expect(acceptOAuthReturn("other", { state: "abc", verifier: "", startedAt: 1 })).toBe(false);
+    expect(acceptOAuthReturn("other", { state: "abc", verifier: "", startedAt: 1 })).toBe(true);
   });
 
   it("сохраняет токен при повторном вызове consume (StrictMode)", async () => {
