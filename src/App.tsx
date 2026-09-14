@@ -21,6 +21,7 @@ import { createYandexDiskClient, YandexDiskError } from "./yandex/disk";
 import { consumeOAuthRedirect, startYandexLogin, type OAuthToken } from "./yandex/oauth";
 import { clearSession, loadSession, saveSession, type YandexSession } from "./yandex/session";
 import { syncErrorMessage, syncWithDisk, type SyncStatus } from "./yandex/sync";
+import { isAppleMobile, isStandaloneDisplay } from "./display";
 
 export function App() {
   const [shoes, setShoes] = useState<Shoe[]>([]);
@@ -156,6 +157,15 @@ export function App() {
   }
 
   const activeCount = activeShoes(shoes).length;
+  const appleMobile = isAppleMobile();
+  const standalone = isStandaloneDisplay();
+  const homeScreenHint = appleMobile
+    ? standalone
+      ? session
+        ? "Это окно с экрана «Домой». У него своя память, не общая с Safari. Если полка пустая, нажмите «Синхронизировать»: фото подтянутся с Яндекс Диска."
+        : "Это окно с экрана «Домой». Фото из Safari сюда сами не копируются. Войдите в Яндекс Диск, чтобы загрузить каталог."
+      : "Значок на экране «Домой» открывает отдельную копию Полки. Там нужно войти в Яндекс Диск ещё раз — тогда появятся те же фото."
+    : null;
 
   return (
     <>
@@ -196,7 +206,8 @@ export function App() {
             </button>
           </p>
         ) : null}
-        {!session ? (
+        {homeScreenHint ? <p className="local-hint">{homeScreenHint}</p> : null}
+        {!session && !homeScreenHint ? (
           <p className="local-hint">
             Карточки хранятся на этом устройстве. Чтобы открыть тот же каталог на другом устройстве,
             войдите через Яндекс.

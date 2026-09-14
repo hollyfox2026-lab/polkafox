@@ -19,7 +19,11 @@ export function mergeCatalogs(local: Shoe[], remote: Shoe[]): Shoe[] {
     if (!normalized) continue;
     const previous = map.get(normalized.id);
     if (!previous || normalized.updatedAt > previous.updatedAt) {
-      map.set(normalized.id, normalized);
+      const photo =
+        !normalized.deletedAt && !normalized.photo && previous?.photo
+          ? previous.photo
+          : normalized.photo;
+      map.set(normalized.id, { ...normalized, photo });
     } else if (
       normalized.updatedAt === previous.updatedAt &&
       !previous.photo &&

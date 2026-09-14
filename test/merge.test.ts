@@ -65,6 +65,20 @@ describe("mergeCatalogs", () => {
     const remote = [shoe({ id: "1", name: "Кеды", updatedAt: 10, photo: null })];
     expect(mergeCatalogs(local, remote)[0].photo).toBe("data:image/jpeg;base64,abc");
   });
+
+  it("не затирает фото более новой записью без снимка", () => {
+    const local = [
+      shoe({
+        id: "1",
+        name: "Кеды",
+        updatedAt: 10,
+        photo: "data:image/jpeg;base64,abc",
+      }),
+    ];
+    const remote = [shoe({ id: "1", name: "Кеды", updatedAt: 20, photo: null })];
+    expect(mergeCatalogs(local, remote)[0].photo).toBe("data:image/jpeg;base64,abc");
+    expect(mergeCatalogs(local, remote)[0].updatedAt).toBe(20);
+  });
 });
 
 describe("parseCatalog", () => {

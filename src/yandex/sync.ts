@@ -1,7 +1,8 @@
 import type { Shoe } from "../types";
-import { mergeCatalogs } from "../catalog";
+import { activeShoes, mergeCatalogs } from "../catalog";
 import type { WardrobeDb } from "../db";
 import { YandexDiskError, type YandexDiskClient } from "./disk";
+import type { CatalogFile } from "../types";
 
 export type SyncStatus = "idle" | "syncing" | "synced" | "error" | "offline";
 
@@ -11,15 +12,37 @@ export interface SyncResult {
   pushed: boolean;
 }
 
+/**
+ * Сначала читает Диск, затем сливает с локальной копией.
+ * Пустой клиент (новая иконка на экране Домой) не записывает на Диск пустой каталог.
+ */
 export async function syncWithDisk(
   db: WardrobeDb,
   disk: YandexDiskClient,
 ): Promise<SyncResult> {
   const local = await db.listAll();
-  const remote = await disk.downloadCatalog();
+  const localActive = activeShoes(local);
+
+  let remote: CatalogFile | null;
+  try {
+    remote = await disk.downloadCatalog();
+  } catch (error) {
+    if (localActive.length === 0) throw error;
+    await disk.uploadCatalog(local);
+    await db.putAll(local);
+    return { items: local, pulled: false, pushed: true };
+  }
+
   const remoteItems = remote?.items ?? [];
   const merged = mergeCatalogs(local, remoteItems);
+  const mergedActive = activeShoes(merged);
   await db.putAll(merged);
+
+  const nothingToPublish = mergedActive.length === 0;
+  if (nothingToPublish) {
+    return { items: merged, pulled: remote !== null, pushed: false };
+  }
+
   await disk.uploadCatalog(merged);
   return {
     items: merged,

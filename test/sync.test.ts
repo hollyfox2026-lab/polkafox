@@ -113,6 +113,71 @@ describe("syncWithDisk", () => {
       .sort();
     expect(names).toEqual(["Дисковые", "Локальные"]);
   });
+
+  it("не записывает на Диск пустой каталог с нового устройства", async () => {
+    let uploaded: Shoe[] | null = null;
+    const disk: YandexDiskClient = {
+      async getUser() {
+        return { login: "fox", displayName: "Fox" };
+      },
+      async ensureFolder() {
+        return "app:/";
+      },
+      async downloadCatalog() {
+        return null;
+      },
+      async uploadCatalog(items) {
+        uploaded = items;
+      },
+    };
+    const result = await syncWithDisk(memoryDb(), disk);
+    expect(result.pushed).toBe(false);
+    expect(uploaded).toBeNull();
+    expect(result.items).toEqual([]);
+  });
+
+  it("на пустом устройстве забирает фото с Диска и не затирает их", async () => {
+    const remoteItems = [shoe("r1", "Сапоги с Диска", 10)];
+    let uploaded: Shoe[] = [];
+    const disk: YandexDiskClient = {
+      async getUser() {
+        return { login: "fox", displayName: "Fox" };
+      },
+      async ensureFolder() {
+        return "app:/";
+      },
+      async downloadCatalog() {
+        return { version: 1, updatedAt: 10, items: remoteItems };
+      },
+      async uploadCatalog(items) {
+        uploaded = items;
+      },
+    };
+    const result = await syncWithDisk(memoryDb(), disk);
+    expect(result.pulled).toBe(true);
+    expect(activeShoes(result.items)[0].photo).toContain("data:image/jpeg");
+    expect(uploaded[0].photo).toContain("data:image/jpeg");
+  });
+
+  it("не считает ошибку чтения Диска пустым каталогом", async () => {
+    let uploaded = false;
+    const disk: YandexDiskClient = {
+      async getUser() {
+        return { login: "fox", displayName: "Fox" };
+      },
+      async ensureFolder() {
+        return "app:/";
+      },
+      async downloadCatalog() {
+        throw new Error("Failed to fetch");
+      },
+      async uploadCatalog() {
+        uploaded = true;
+      },
+    };
+    await expect(syncWithDisk(memoryDb(), disk)).rejects.toThrow(/Failed to fetch/);
+    expect(uploaded).toBe(false);
+  });
 });
 
 describe("syncErrorMessage", () => {
