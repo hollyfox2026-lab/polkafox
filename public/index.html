@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Полка — гардероб обуви</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%9F%3C/text%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">👟</span>
+        <div>
+          <h1>Полка</h1>
+          <p class="subtitle">Гардероб обуви</p>
+        </div>
+      </div>
+      <span id="counter" class="counter">0 пар</span>
+    </header>
+
+    <main class="container">
+      <section class="controls">
+        <input id="search" type="search" placeholder="Поиск по названию, бренду, цвету, размеру" />
+        <div id="season-filter" class="season-filter"></div>
+      </section>
+
+      <section class="board">
+        <form id="add-form" class="card form-card" enctype="multipart/form-data">
+          <h2>Добавить пару</h2>
+          <label>Название<input name="name" type="text" placeholder="Кроссовки" required /></label>
+          <label>Бренд<input name="brand" type="text" placeholder="Nike" /></label>
+          <div class="row">
+            <label>Сезон
+              <select name="season" id="season-select"></select>
+            </label>
+            <label>Размер<input name="size" type="text" placeholder="42" /></label>
+          </div>
+          <label>Цвет<input name="color" type="text" placeholder="чёрный" /></label>
+          <label>Описание<textarea name="description" rows="2" placeholder="Заметки"></textarea></label>
+          <label class="file-label">
+            Фотография
+            <input name="photo" id="photo" type="file" accept="image/*" />
+          </label>
+          <img id="preview" class="preview" alt="Предпросмотр" hidden />
+          <button type="submit">Добавить</button>
+          <p id="form-message" class="form-message" role="status"></p>
+        </form>
+
+        <div class="gallery-wrap">
+          <ul id="gallery" class="gallery"></ul>
+          <p id="empty" class="empty" hidden>Полка пока пустая. Добавьте первую пару.</p>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
