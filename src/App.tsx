@@ -18,13 +18,7 @@ import {
   type ShoeDraft,
 } from "./types";
 import { createYandexDiskClient, YandexDiskError } from "./yandex/disk";
-import {
-  oauthHashState,
-  parseOAuthHash,
-  startYandexLogin,
-  takeOAuthState,
-  verifyOAuthState,
-} from "./yandex/oauth";
+import { consumeOAuthRedirect, startYandexLogin, type OAuthToken } from "./yandex/oauth";
 import { clearSession, loadSession, saveSession, type YandexSession } from "./yandex/session";
 import { syncErrorMessage, syncWithDisk, type SyncStatus } from "./yandex/sync";
 
@@ -62,14 +56,10 @@ export function App() {
       setLastSyncAt(Date.now());
       setSyncStatus("synced");
     } catch (error) {
+      setSyncStatus("error");
+      setSyncError(syncErrorMessage(error));
       if (error instanceof YandexDiskError && error.status === 401) {
-        clearSession();
-        setSession(null);
-        setSyncStatus("offline");
-        setSyncError("Сессия Яндекса истекла. Войдите снова.");
-      } else {
-        setSyncStatus("error");
-        setSyncError(syncErrorMessage(error));
+        setBanner("Яндекс не принял доступ к Диску. Откройте меню Диска и войдите снова.");
       }
     } finally {
       syncing.current = false;
@@ -85,40 +75,13 @@ export function App() {
     let cancelled = false;
 
     async function boot() {
-      const hash = window.location.hash;
-      const oauth = parseOAuthHash(hash);
-      if (oauth) {
-        history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-        if (!oauth.ok) {
-          setBanner(oauth.description || "Вход через Яндекс отменён.");
-        } else {
-          const expected = takeOAuthState();
-          const returned = oauthHashState(hash);
-          if (!verifyOAuthState(returned, expected)) {
-            setBanner("Вход через Яндекс не подтверждён. Повторите попытку.");
-          } else {
-            try {
-              const disk = createYandexDiskClient(oauth.token.accessToken);
-              const user = await disk.getUser();
-              const nextSession: YandexSession = {
-                accessToken: oauth.token.accessToken,
-                tokenType: oauth.token.tokenType,
-                expiresAt: Date.now() + oauth.token.expiresIn * 1000,
-                login: user.login,
-                displayName: user.displayName,
-              };
-              saveSession(nextSession);
-              if (!cancelled) {
-                setSession(nextSession);
-                setBanner("Яндекс Диск подключён. Каталог загружается.");
-              }
-            } catch (error) {
-              if (!cancelled) {
-                setBanner(syncErrorMessage(error));
-              }
-            }
-          }
-        }
+      const oauth = await consumeOAuthRedirect();
+      if (oauth.kind === "error") {
+        setBanner(oauth.message);
+      } else if (oauth.kind === "token") {
+        const nextSession = await sessionFromToken(oauth.token);
+        setSession(nextSession);
+        setBanner("Яндекс Диск подключён. Каталог загружается.");
       }
 
       await reload();
@@ -211,7 +174,7 @@ export function App() {
               status={session ? syncStatus : "offline"}
               error={syncError}
               lastSyncAt={lastSyncAt}
-              onLogin={() => startYandexLogin()}
+              onLogin={() => void startYandexLogin()}
               onLogout={() => {
                 clearSession();
                 setSession(null);
@@ -305,4 +268,27 @@ export function App() {
       ) : null}
     </>
   );
+}
+
+async function sessionFromToken(token: OAuthToken): Promise<YandexSession> {
+  const session: YandexSession = {
+    accessToken: token.accessToken,
+    tokenType: token.tokenType,
+    expiresAt: Date.now() + token.expiresIn * 1000,
+    login: "",
+    displayName: "Яндекс Диск",
+  };
+  saveSession(session);
+  try {
+    const user = await createYandexDiskClient(token.accessToken).getUser();
+    const named: YandexSession = {
+      ...session,
+      login: user.login,
+      displayName: user.displayName || user.login || "Яндекс Диск",
+    };
+    saveSession(named);
+    return named;
+  } catch {
+    return session;
+  }
 }

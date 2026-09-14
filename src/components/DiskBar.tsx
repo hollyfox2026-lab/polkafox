@@ -38,7 +38,7 @@ export function DiskBar({
       ? "Синхронизация…"
       : status === "error"
         ? "Ошибка Диска"
-        : session.displayName || session.login || "Яндекс Диск"
+        : connectedLabel(session)
     : "Войти в Диск";
 
   return (
@@ -78,6 +78,12 @@ export function DiskBar({
       ) : null}
     </div>
   );
+}
+
+function connectedLabel(session: YandexSession): string {
+  const name = session.displayName || session.login;
+  if (name && name !== "Яндекс Диск") return `Диск · ${name}`;
+  return "Диск подключён";
 }
 
 function statusText(status: SyncStatus, error: string | null, lastSyncAt: number | null): string {
