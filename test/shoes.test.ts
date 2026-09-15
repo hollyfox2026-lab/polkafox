@@ -4,9 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:http";
 import { openDatabase, type DatabaseHandle } from "../src/db.js";
-import { ShoeRepository } from "../src/shoes.js";
+import { ShoeRepository, type NewShoe, type Shoe } from "../src/shoes.js";
 import { LocalDiskStorage } from "../src/storage.js";
 import { createApp } from "../src/app.js";
+
+const PNG_PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+class FailingCreateRepo extends ShoeRepository {
+  create(_input: NewShoe): Shoe {
+    throw new Error("Симуляция ошибки БД");
+  }
+}
 
 describe("ShoeRepository", () => {
   let db: DatabaseHandle;
@@ -29,6 +40,22 @@ describe("ShoeRepository", () => {
     expect(repo.list({ season: "winter" }).every((s) => s.season === "winter")).toBe(true);
     expect(repo.list({ query: "кеды" }).length).toBeGreaterThanOrEqual(1);
     expect(repo.list({ query: "белый" }).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("updates shoe fields", () => {
+    const repo = new ShoeRepository(db);
+    const created = repo.create({ name: "Ботинки", season: "autumn", brand: "Old" });
+    const updated = repo.update(created.id, {
+      name: "Ботинки Pro",
+      brand: "New",
+      season: "winter",
+    });
+    expect(updated).toMatchObject({
+      id: created.id,
+      name: "Ботинки Pro",
+      brand: "New",
+      season: "winter",
+    });
   });
 });
 
@@ -72,6 +99,13 @@ describe("HTTP API", () => {
     expect(body.storage).toBe("local");
   });
 
+  it("returns seasons list", async () => {
+    const res = await fetch(`${baseUrl}/api/seasons`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.seasons).toEqual(["all", "winter", "spring", "summer", "autumn"]);
+  });
+
   it("creates a shoe with a photo via multipart and stores the file", async () => {
     const form = new FormData();
     form.set("name", "Кроссовки");
@@ -79,11 +113,7 @@ describe("HTTP API", () => {
     form.set("season", "summer");
     form.set("size", "42");
     form.set("color", "синий");
-    const pngPixel = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-      "base64",
-    );
-    form.set("photo", new Blob([pngPixel], { type: "image/png" }), "shoe.png");
+    form.set("photo", new Blob([PNG_PIXEL], { type: "image/png" }), "shoe.png");
 
     const res = await fetch(`${baseUrl}/api/shoes`, { method: "POST", body: form });
     expect(res.status).toBe(201);
@@ -91,6 +121,16 @@ describe("HTTP API", () => {
     expect(body.shoe).toMatchObject({ name: "Кроссовки", brand: "Nike", season: "summer" });
     expect(body.shoe.photoUrl).toMatch(/^\/uploads\//);
     expect(readdirSync(uploadsDir).length).toBe(1);
+  });
+
+  it("gets a shoe by id", async () => {
+    const list = await (await fetch(`${baseUrl}/api/shoes`)).json();
+    const target = list.shoes[0];
+    const res = await fetch(`${baseUrl}/api/shoes/${target.id}`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.shoe.id).toBe(target.id);
+    expect(body.shoe.name).toBe(target.name);
   });
 
   it("lists shoes and filters by season", async () => {
@@ -111,16 +151,91 @@ describe("HTTP API", () => {
     expect(body.errors.map((e: { field: string }) => e.field)).toContain("name");
   });
 
+  it("updates a shoe and replaces its photo", async () => {
+    const createForm = new FormData();
+    createForm.set("name", "Сапоги");
+    createForm.set("season", "winter");
+    createForm.set("photo", new Blob([PNG_PIXEL], { type: "image/png" }), "old.png");
+    const createdRes = await fetch(`${baseUrl}/api/shoes`, { method: "POST", body: createForm });
+    const created = (await createdRes.json()).shoe;
+    const filesBefore = new Set(readdirSync(uploadsDir));
+
+    const patchForm = new FormData();
+    patchForm.set("name", "Сапоги тёплые");
+    patchForm.set("brand", "Columbia");
+    patchForm.set("season", "winter");
+    patchForm.set("photo", new Blob([PNG_PIXEL], { type: "image/png" }), "new.png");
+    const res = await fetch(`${baseUrl}/api/shoes/${created.id}`, {
+      method: "PATCH",
+      body: patchForm,
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.shoe).toMatchObject({
+      id: created.id,
+      name: "Сапоги тёплые",
+      brand: "Columbia",
+    });
+    expect(body.shoe.photoKey).not.toBe(created.photoKey);
+    expect(filesBefore.has(created.photoKey)).toBe(true);
+    expect(readdirSync(uploadsDir).includes(created.photoKey)).toBe(false);
+    expect(readdirSync(uploadsDir).includes(body.shoe.photoKey)).toBe(true);
+  });
+
   it("deletes a shoe and removes its photo file", async () => {
     const listBefore = await (await fetch(`${baseUrl}/api/shoes`)).json();
-    const target = listBefore.shoes[0];
-    expect(target).toBeTruthy();
+    const withPhoto = listBefore.shoes.find((s: { photoKey: string }) => s.photoKey);
+    expect(withPhoto).toBeTruthy();
+    const filesBefore = readdirSync(uploadsDir).length;
 
-    const res = await fetch(`${baseUrl}/api/shoes/${target.id}`, { method: "DELETE" });
+    const res = await fetch(`${baseUrl}/api/shoes/${withPhoto.id}`, { method: "DELETE" });
     expect(res.status).toBe(200);
-    expect(readdirSync(uploadsDir).length).toBe(0);
+    expect(readdirSync(uploadsDir).length).toBe(filesBefore - 1);
 
-    const check = await fetch(`${baseUrl}/api/shoes/${target.id}`);
+    const check = await fetch(`${baseUrl}/api/shoes/${withPhoto.id}`);
     expect(check.status).toBe(404);
+  });
+});
+
+describe("HTTP API orphan rollback", () => {
+  let server: Server;
+  let baseUrl: string;
+  let uploadsDir: string;
+
+  beforeAll(async () => {
+    uploadsDir = mkdtempSync(join(tmpdir(), "polka-orphan-"));
+    const db = openDatabase(":memory:");
+    const storage = new LocalDiskStorage(uploadsDir);
+    const app = createApp({
+      db,
+      storage,
+      publicDir: uploadsDir,
+      uploadsDir,
+      serveStatic: false,
+      repository: new FailingCreateRepo(db),
+    });
+    await new Promise<void>((resolve) => app.listen(0, "127.0.0.1", () => resolve()));
+    server = app.server as Server;
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Не удалось запустить тестовый сервер.");
+    }
+    baseUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+    rmSync(uploadsDir, { recursive: true, force: true });
+  });
+
+  it("removes uploaded photo when create fails after storage.save", async () => {
+    const form = new FormData();
+    form.set("name", "Сирота");
+    form.set("photo", new Blob([PNG_PIXEL], { type: "image/png" }), "orphan.png");
+    const res = await fetch(`${baseUrl}/api/shoes`, { method: "POST", body: form });
+    expect(res.status).toBe(500);
+    expect(readdirSync(uploadsDir).length).toBe(0);
   });
 });

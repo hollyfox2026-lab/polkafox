@@ -30,7 +30,7 @@
 
       <section class="board">
         <form id="add-form" class="card form-card" enctype="multipart/form-data">
-          <h2>Добавить пару</h2>
+          <h2 id="form-title">Добавить пару</h2>
           <label>Название<input name="name" type="text" placeholder="Кроссовки" required /></label>
           <label>Бренд<input name="brand" type="text" placeholder="Nike" /></label>
           <div class="row">
@@ -46,7 +46,10 @@
             <input name="photo" id="photo" type="file" accept="image/*" />
           </label>
           <img id="preview" class="preview" alt="Предпросмотр" hidden />
-          <button type="submit">Добавить</button>
+          <div class="form-actions">
+            <button type="submit" id="submit-btn">Добавить</button>
+            <button type="button" id="cancel-edit" class="secondary" hidden>Отмена</button>
+          </div>
           <p id="form-message" class="form-message" role="status"></p>
         </form>
 

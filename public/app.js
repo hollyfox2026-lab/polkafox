@@ -1,4 +1,4 @@
-const SEASON_LABELS = {
+const FALLBACK_SEASON_LABELS = {
   all: "Всё",
   winter: "Зима",
   spring: "Весна",
@@ -7,6 +7,9 @@ const SEASON_LABELS = {
 };
 
 const form = document.querySelector("#add-form");
+const formTitle = document.querySelector("#form-title");
+const submitBtn = document.querySelector("#submit-btn");
+const cancelEdit = document.querySelector("#cancel-edit");
 const gallery = document.querySelector("#gallery");
 const empty = document.querySelector("#empty");
 const message = document.querySelector("#form-message");
@@ -17,22 +20,40 @@ const seasonSelect = document.querySelector("#season-select");
 const photoInput = document.querySelector("#photo");
 const preview = document.querySelector("#preview");
 
+let seasonLabels = { ...FALLBACK_SEASON_LABELS };
 let activeSeason = "all";
 let searchTimer;
+let editingId = null;
+let busy = false;
 
 function setMessage(text, kind) {
   message.textContent = text;
   message.className = "form-message" + (kind ? " " + kind : "");
 }
 
-function buildSeasonControls() {
-  for (const [value, label] of Object.entries(SEASON_LABELS)) {
+function setBusy(next) {
+  busy = next;
+  submitBtn.disabled = next;
+  cancelEdit.disabled = next;
+  form.querySelectorAll("input, select, textarea").forEach((el) => {
+    el.disabled = next;
+  });
+}
+
+function buildSeasonControls(seasons) {
+  seasonFilter.innerHTML = "";
+  seasonSelect.innerHTML = "";
+
+  for (const value of seasons) {
+    const label = seasonLabels[value] || value;
+
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "chip" + (value === activeSeason ? " active" : "");
     chip.textContent = label;
     chip.dataset.season = value;
     chip.addEventListener("click", () => {
+      if (busy) return;
       activeSeason = value;
       document.querySelectorAll(".chip").forEach((c) => c.classList.remove("active"));
       chip.classList.add("active");
@@ -46,6 +67,22 @@ function buildSeasonControls() {
       opt.textContent = label;
       seasonSelect.appendChild(opt);
     }
+  }
+}
+
+async function loadSeasons() {
+  try {
+    const res = await fetch("/api/seasons");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const seasons = Array.isArray(data.seasons) ? data.seasons : Object.keys(FALLBACK_SEASON_LABELS);
+    seasonLabels = { ...FALLBACK_SEASON_LABELS };
+    for (const value of seasons) {
+      if (!seasonLabels[value]) seasonLabels[value] = value;
+    }
+    buildSeasonControls(seasons.includes("all") ? seasons : ["all", ...seasons]);
+  } catch {
+    buildSeasonControls(Object.keys(FALLBACK_SEASON_LABELS));
   }
 }
 
@@ -85,7 +122,7 @@ function shoeCard(shoe) {
 
   const badges = document.createElement("div");
   badges.className = "badges";
-  badges.appendChild(makeBadge(SEASON_LABELS[shoe.season] || shoe.season));
+  badges.appendChild(makeBadge(seasonLabels[shoe.season] || shoe.season));
   if (shoe.size) badges.appendChild(makeBadge("р. " + shoe.size));
   if (shoe.color) badges.appendChild(makeBadge(shoe.color));
   body.appendChild(badges);
@@ -99,13 +136,22 @@ function shoeCard(shoe) {
 
   const actions = document.createElement("div");
   actions.className = "shoe-actions";
+
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "edit";
+  edit.textContent = "Изменить";
+  edit.addEventListener("click", () => startEdit(shoe));
+  actions.appendChild(edit);
+
   const del = document.createElement("button");
+  del.type = "button";
   del.className = "delete";
   del.textContent = "Удалить";
-  del.addEventListener("click", () => removeShoe(shoe.id));
+  del.addEventListener("click", () => removeShoe(shoe));
   actions.appendChild(del);
-  body.appendChild(actions);
 
+  body.appendChild(actions);
   li.appendChild(photo);
   li.appendChild(body);
   return li;
@@ -116,6 +162,41 @@ function makeBadge(text) {
   b.className = "badge";
   b.textContent = text;
   return b;
+}
+
+function startEdit(shoe) {
+  editingId = shoe.id;
+  formTitle.textContent = "Изменить пару";
+  submitBtn.textContent = "Сохранить";
+  cancelEdit.hidden = false;
+  form.name.value = shoe.name || "";
+  form.brand.value = shoe.brand || "";
+  if (shoe.season && shoe.season !== "all") {
+    form.season.value = shoe.season;
+  } else if (seasonSelect.options.length > 0) {
+    form.season.selectedIndex = 0;
+  }
+  form.size.value = shoe.size || "";
+  form.color.value = shoe.color || "";
+  form.description.value = shoe.description || "";
+  photoInput.value = "";
+  if (shoe.photoUrl) {
+    preview.src = shoe.photoUrl;
+    preview.hidden = false;
+  } else {
+    preview.hidden = true;
+  }
+  setMessage("Редактирование: " + shoe.name, "");
+  form.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function resetFormMode() {
+  editingId = null;
+  formTitle.textContent = "Добавить пару";
+  submitBtn.textContent = "Добавить";
+  cancelEdit.hidden = true;
+  form.reset();
+  preview.hidden = true;
 }
 
 async function loadShoes() {
@@ -149,13 +230,23 @@ function plural(n) {
   return "пар";
 }
 
-async function removeShoe(id) {
+async function removeShoe(shoe) {
+  if (busy) return;
+  const ok = window.confirm('Удалить пару «' + shoe.name + '»?');
+  if (!ok) return;
+  setBusy(true);
   try {
-    const res = await fetch("/api/shoes/" + id, { method: "DELETE" });
+    const res = await fetch("/api/shoes/" + shoe.id, { method: "DELETE" });
     if (!res.ok) throw new Error("HTTP " + res.status);
+    if (editingId === shoe.id) {
+      resetFormMode();
+      setMessage("Удалено.", "ok");
+    }
     await loadShoes();
   } catch (err) {
     setMessage("Не удалось удалить: " + err.message, "err");
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -164,16 +255,29 @@ photoInput.addEventListener("change", () => {
   if (file) {
     preview.src = URL.createObjectURL(file);
     preview.hidden = false;
-  } else {
+  } else if (!editingId) {
     preview.hidden = true;
   }
 });
 
+cancelEdit.addEventListener("click", () => {
+  if (busy) return;
+  resetFormMode();
+  setMessage("", "");
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (busy) return;
   const formData = new FormData(form);
+  if (editingId && (!photoInput.files || photoInput.files.length === 0)) {
+    formData.delete("photo");
+  }
+  const url = editingId ? "/api/shoes/" + editingId : "/api/shoes";
+  const method = editingId ? "PATCH" : "POST";
+  setBusy(true);
   try {
-    const res = await fetch("/api/shoes", { method: "POST", body: formData });
+    const res = await fetch(url, { method, body: formData });
     const data = await res.json();
     if (!res.ok) {
       const detail = data.errors
@@ -182,12 +286,14 @@ form.addEventListener("submit", async (event) => {
       setMessage(detail, "err");
       return;
     }
-    setMessage("Добавлено: " + data.shoe.name, "ok");
-    form.reset();
-    preview.hidden = true;
+    const verb = editingId ? "Сохранено" : "Добавлено";
+    setMessage(verb + ": " + data.shoe.name, "ok");
+    resetFormMode();
     await loadShoes();
   } catch (err) {
     setMessage("Не удалось сохранить: " + err.message, "err");
+  } finally {
+    setBusy(false);
   }
 });
 
@@ -196,5 +302,5 @@ search.addEventListener("input", () => {
   searchTimer = setTimeout(loadShoes, 250);
 });
 
-buildSeasonControls();
-loadShoes();
+await loadSeasons();
+await loadShoes();
