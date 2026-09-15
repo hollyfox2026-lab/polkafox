@@ -199,6 +199,24 @@ button:hover {
   filter: brightness(0.97);
 }
 
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  filter: none;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
 .preview {
   width: 100%;
   max-height: 180px;
@@ -298,14 +316,25 @@ button:hover {
 .shoe-actions {
   margin-top: auto;
   padding-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
+.edit,
 .delete {
   background: transparent;
-  color: var(--err);
   border: 1px solid var(--line);
   padding: 0.35rem 0.7rem;
   font-size: 0.8rem;
+}
+
+.edit {
+  color: var(--ink);
+}
+
+.delete {
+  color: var(--err);
 }
 
 .empty {

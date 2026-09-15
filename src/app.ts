@@ -3,7 +3,14 @@ import polka from "polka";
 import sirv from "sirv";
 import busboy from "busboy";
 import type { DatabaseHandle } from "./db.js";
-import { ShoeRepository, validateNewShoe, SEASONS, type Season } from "./shoes.js";
+import {
+  ShoeRepository,
+  validateNewShoe,
+  validateShoePatch,
+  SEASONS,
+  type Season,
+  type UpdateShoe,
+} from "./shoes.js";
 import type { StorageProvider } from "./storage.js";
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -90,16 +97,69 @@ async function readJson(req: IncomingMessage): Promise<Record<string, string>> {
   return result;
 }
 
+async function parseBody(
+  req: IncomingMessage,
+): Promise<{ fields: Record<string, string>; file?: ParsedFile }> {
+  const contentType = req.headers["content-type"] ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    return parseMultipart(req);
+  }
+  return { fields: await readJson(req) };
+}
+
+type SavePhotoResult =
+  | { ok: true; url: string; key: string }
+  | { ok: false; status: number; payload: unknown };
+
+async function savePhoto(storage: StorageProvider, file: ParsedFile): Promise<SavePhotoResult> {
+  if (!file.mimeType.startsWith("image/")) {
+    return {
+      ok: false,
+      status: 422,
+      payload: {
+        errors: [{ field: "photo", message: "Фотография должна быть изображением." }],
+      },
+    };
+  }
+  try {
+    const stored = await storage.save({
+      buffer: file.buffer,
+      filename: file.filename,
+      contentType: file.mimeType,
+    });
+    return { ok: true, url: stored.url, key: stored.key };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 502,
+      payload: { error: `Не удалось сохранить фото: ${(err as Error).message}` },
+    };
+  }
+}
+
+function patchFromFields(fields: Record<string, string>): UpdateShoe {
+  const patch: UpdateShoe = {};
+  if ("name" in fields) patch.name = fields.name;
+  if ("brand" in fields) patch.brand = fields.brand;
+  if ("description" in fields) patch.description = fields.description;
+  if ("season" in fields) patch.season = (fields.season as Season) || "all";
+  if ("size" in fields) patch.size = fields.size;
+  if ("color" in fields) patch.color = fields.color;
+  return patch;
+}
+
 export interface AppDeps {
   db: DatabaseHandle;
   storage: StorageProvider;
   publicDir: string;
   uploadsDir: string;
   serveStatic?: boolean;
+  /** Подмена репозитория для тестов (симуляция ошибок БД). */
+  repository?: ShoeRepository;
 }
 
 export function createApp(deps: AppDeps) {
-  const repo = new ShoeRepository(deps.db);
+  const repo = deps.repository ?? new ShoeRepository(deps.db);
   const app = polka();
 
   app.get("/api/health", (_req, res) => {
@@ -139,15 +199,10 @@ export function createApp(deps: AppDeps) {
     let fields: Record<string, string> = {};
     let file: ParsedFile | undefined;
 
-    const contentType = req.headers["content-type"] ?? "";
     try {
-      if (contentType.includes("multipart/form-data")) {
-        const parsed = await parseMultipart(req);
-        fields = parsed.fields;
-        file = parsed.file;
-      } else {
-        fields = await readJson(req);
-      }
+      const parsed = await parseBody(req);
+      fields = parsed.fields;
+      file = parsed.file;
     } catch (err) {
       sendJson(res, 400, { error: (err as Error).message });
       return;
@@ -162,37 +217,99 @@ export function createApp(deps: AppDeps) {
     let photoUrl = "";
     let photoKey = "";
     if (file) {
-      if (!file.mimeType.startsWith("image/")) {
-        sendJson(res, 422, {
-          errors: [{ field: "photo", message: "Фотография должна быть изображением." }],
-        });
+      const saved = await savePhoto(deps.storage, file);
+      if (!saved.ok) {
+        sendJson(res, saved.status, saved.payload);
         return;
       }
-      try {
-        const stored = await deps.storage.save({
-          buffer: file.buffer,
-          filename: file.filename,
-          contentType: file.mimeType,
-        });
-        photoUrl = stored.url;
-        photoKey = stored.key;
-      } catch (err) {
-        sendJson(res, 502, { error: `Не удалось сохранить фото: ${(err as Error).message}` });
-        return;
-      }
+      photoUrl = saved.url;
+      photoKey = saved.key;
     }
 
-    const shoe = repo.create({
-      name: fields.name ?? "",
-      brand: fields.brand,
-      description: fields.description,
-      season: (fields.season as Season) || "all",
-      size: fields.size,
-      color: fields.color,
-      photoUrl,
-      photoKey,
-    });
-    sendJson(res, 201, { shoe });
+    try {
+      const shoe = repo.create({
+        name: fields.name ?? "",
+        brand: fields.brand,
+        description: fields.description,
+        season: (fields.season as Season) || "all",
+        size: fields.size,
+        color: fields.color,
+        photoUrl,
+        photoKey,
+      });
+      sendJson(res, 201, { shoe });
+    } catch (err) {
+      if (photoKey) {
+        await deps.storage.remove(photoKey).catch(() => undefined);
+      }
+      sendJson(res, 500, { error: `Не удалось сохранить запись: ${(err as Error).message}` });
+    }
+  });
+
+  app.patch("/api/shoes/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      sendJson(res, 400, { error: "Идентификатор должен быть целым числом." });
+      return;
+    }
+
+    const existing = repo.get(id);
+    if (!existing) {
+      sendJson(res, 404, { error: `Пара с id ${id} не найдена.` });
+      return;
+    }
+
+    let fields: Record<string, string> = {};
+    let file: ParsedFile | undefined;
+    try {
+      const parsed = await parseBody(req);
+      fields = parsed.fields;
+      file = parsed.file;
+    } catch (err) {
+      sendJson(res, 400, { error: (err as Error).message });
+      return;
+    }
+
+    const errors = validateShoePatch(fields);
+    if (errors.length > 0) {
+      sendJson(res, 422, { errors });
+      return;
+    }
+
+    const patch = patchFromFields(fields);
+    let newPhotoKey: string | undefined;
+    const previousPhotoKey = existing.photoKey;
+
+    if (file) {
+      const saved = await savePhoto(deps.storage, file);
+      if (!saved.ok) {
+        sendJson(res, saved.status, saved.payload);
+        return;
+      }
+      patch.photoUrl = saved.url;
+      patch.photoKey = saved.key;
+      newPhotoKey = saved.key;
+    }
+
+    try {
+      const shoe = repo.update(id, patch);
+      if (!shoe) {
+        if (newPhotoKey) {
+          await deps.storage.remove(newPhotoKey).catch(() => undefined);
+        }
+        sendJson(res, 404, { error: `Пара с id ${id} не найдена.` });
+        return;
+      }
+      if (newPhotoKey && previousPhotoKey && previousPhotoKey !== newPhotoKey) {
+        await deps.storage.remove(previousPhotoKey).catch(() => undefined);
+      }
+      sendJson(res, 200, { shoe });
+    } catch (err) {
+      if (newPhotoKey) {
+        await deps.storage.remove(newPhotoKey).catch(() => undefined);
+      }
+      sendJson(res, 500, { error: `Не удалось обновить запись: ${(err as Error).message}` });
+    }
   });
 
   app.delete("/api/shoes/:id", async (req, res) => {

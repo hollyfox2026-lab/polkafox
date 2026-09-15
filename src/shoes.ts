@@ -27,10 +27,30 @@ export interface NewShoe {
   photoKey?: string;
 }
 
+/** Частичное обновление: переданные поля заменяют значения в записи. */
+export interface UpdateShoe {
+  name?: string;
+  brand?: string;
+  description?: string;
+  season?: Season;
+  size?: string;
+  color?: string;
+  photoUrl?: string;
+  photoKey?: string;
+}
+
 export interface ValidationError {
   field: string;
   message: string;
 }
+
+const FIELD_LIMITS = {
+  name: 120,
+  brand: 80,
+  description: 2000,
+  size: 20,
+  color: 40,
+} as const;
 
 export interface ListFilter {
   season?: Season;
@@ -122,6 +142,41 @@ export class ShoeRepository {
     return created;
   }
 
+  update(id: number, input: UpdateShoe): Shoe | undefined {
+    const existing = this.get(id);
+    if (!existing) {
+      return undefined;
+    }
+
+    this.db
+      .prepare(
+        `UPDATE shoes SET
+           name = @name,
+           brand = @brand,
+           description = @description,
+           season = @season,
+           size = @size,
+           color = @color,
+           photo_url = @photoUrl,
+           photo_key = @photoKey
+         WHERE id = @id`,
+      )
+      .run({
+        id,
+        name: input.name !== undefined ? input.name.trim() : existing.name,
+        brand: input.brand !== undefined ? input.brand.trim() : existing.brand,
+        description:
+          input.description !== undefined ? input.description.trim() : existing.description,
+        season: input.season !== undefined ? input.season : existing.season,
+        size: input.size !== undefined ? input.size.trim() : existing.size,
+        color: input.color !== undefined ? input.color.trim() : existing.color,
+        photoUrl: input.photoUrl !== undefined ? input.photoUrl : existing.photoUrl,
+        photoKey: input.photoKey !== undefined ? input.photoKey : existing.photoKey,
+      });
+
+    return this.get(id);
+  }
+
   delete(id: number): Shoe | undefined {
     const existing = this.get(id);
     if (!existing) {
@@ -129,6 +184,21 @@ export class ShoeRepository {
     }
     this.db.prepare("DELETE FROM shoes WHERE id = ?").run(id);
     return existing;
+  }
+}
+
+function pushLengthErrors(
+  fields: Record<string, string>,
+  errors: ValidationError[],
+  keys: (keyof typeof FIELD_LIMITS)[],
+): void {
+  for (const key of keys) {
+    if (fields[key] !== undefined && fields[key].length > FIELD_LIMITS[key]) {
+      errors.push({
+        field: key,
+        message: `Поле «${key}» не длиннее ${FIELD_LIMITS[key]} символов.`,
+      });
+    }
   }
 }
 
@@ -146,5 +216,31 @@ export function validateNewShoe(fields: Record<string, string>): ValidationError
     });
   }
 
+  pushLengthErrors(fields, errors, ["name", "brand", "description", "size", "color"]);
+  return errors;
+}
+
+/**
+ * Валидация PATCH: проверяются только переданные поля.
+ * Пустое имя при передаче поля name — ошибка.
+ */
+export function validateShoePatch(fields: Record<string, string>): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  if ("name" in fields && fields.name.trim().length === 0) {
+    errors.push({ field: "name", message: "Укажите название." });
+  }
+
+  if (fields.season && !(SEASONS as readonly string[]).includes(fields.season)) {
+    errors.push({
+      field: "season",
+      message: `Сезон должен быть одним из: ${SEASONS.join(", ")}.`,
+    });
+  }
+
+  const lengthKeys = (["name", "brand", "description", "size", "color"] as const).filter(
+    (key) => key in fields,
+  );
+  pushLengthErrors(fields, errors, [...lengthKeys]);
   return errors;
 }

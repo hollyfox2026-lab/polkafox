@@ -7,6 +7,7 @@ const db = openDatabase(config.dbPath);
 const storage = createStorage({
   provider: config.storageProvider,
   uploadsDir: config.uploadsDir,
+  yandex: config.yandex,
 });
 
 const app = createApp({
