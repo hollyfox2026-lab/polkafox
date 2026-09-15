@@ -152,8 +152,8 @@ function createAwsS3Client(config: YandexStorageConfig): ObjectStorageClient {
           Key: key,
           Body: body,
           ContentType: contentType,
-          // Публичное чтение объекта для отображения в UI без подписанных ссылок.
-          ACL: "public-read",
+          // Публичность задаётся настройкой бакета «чтение объектов для всех»,
+          // без ACL на объект (иначе Yandex часто отвечает AccessDenied).
         }),
       );
     },
